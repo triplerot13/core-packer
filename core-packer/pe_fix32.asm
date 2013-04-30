@@ -5,8 +5,6 @@ option casemap :none
 peexe SEGMENT PUBLIC READ EXECUTE ALIAS('.peexe32')
 
 public exe_g_hKernel32
-public _exe_LoadLibraryA
-public _exe_GetProcAddress
 public _exe_EntryPoint
 
 exe_g_hKernel32	dd	?	; symbol!
@@ -22,34 +20,6 @@ exe_g_hKernel32	dd	?	; symbol!
 ;	db 0e9h
 ;	dq 0BABECAFEBAD00002h
 ;_VirtualAlloc ENDP
-
-; LoadLibraryA
-_exe_LoadLibraryA PROC param1: DWORD
-	mov esp, ebp
-	pop ebp
-	call _GETBASE
-	add eax, 11223340h
-	jmp dword ptr ds:[eax]
-	nop
-	nop
-	nop
-	nop
-	nop
-_exe_LoadLibraryA ENDP
-
-_exe_GetProcAddress PROC param1: DWORD, param2: DWORD
-	mov esp, ebp
-	pop ebp
-	call _GETBASE
-	add eax, 11223341h
-	jmp dword ptr [eax]
-	nop
-	nop
-	nop
-	nop
-	nop
-_exe_GetProcAddress ENDP
-
 
 _exe_SetFilePointer PROC param1: DWORD, param2: DWORD, param3: DWORD, p4: DWORD
 	mov esp, ebp

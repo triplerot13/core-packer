@@ -3,10 +3,10 @@
 #include "library.h"
 #include "macro.h"
 #include "rva.h"
-#include "rc4.h"
+#include "crypto/rc4.h"
 #include "symbols.h"
 #include "dll32.h"
-#include "tea.h"
+#include "crypto/tea.h"
 #include "patchutils.h"
 
 #ifdef _BUILD32

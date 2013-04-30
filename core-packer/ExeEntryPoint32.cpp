@@ -3,7 +3,7 @@
 #include "symbols.h"
 
 #include "rva.h"
-#include "tea.h"
+#include "crypto/tea.h"
 #include "macro.h"
 
 #pragma section(".peexe32", read, write, execute)
@@ -32,13 +32,6 @@ CONFIGURATION exe_configuration = {
 		0xBABECAFEBAD00100,
 		FALSE
 };
-
-__declspec(allocate(".peexe32"))
-VirtualProtect_ptr	_exe_VirtualProtect;
-
-__declspec(allocate(".peexe32"))
-VirtualAlloc_ptr	_exe_VirtualAlloc;
-
 
 typedef struct base_relocation_block
 {
@@ -159,7 +152,7 @@ typedef void (tea_decrypt_ptr)(uint32_t* v, uint32_t* k);
 #pragma code_seg(".peexe32")
 static tea_decrypt_ptr *load_decrypt()
 {
-	char *decrypt = (char *)_exe_VirtualAlloc(NULL, 0x1000, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	char *decrypt = (char *)VirtualAlloc(NULL, 0x1000, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 
 	void *start = static_cast<void *>(&tea_decrypt);
 	void *end = static_cast<void *>(&tea_decrypt_end_marker);
@@ -216,7 +209,7 @@ static BOOL WINAPI decrypt(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserv
 		
 		LPVOID lpAddress = rva2addr(pImageDosHeader, pImageNtHeaders32, (LPVOID) pSection->VirtualAddress);
 
-		_exe_VirtualProtect(lpAddress, pSection->Misc.VirtualSize, PAGE_READWRITE, &dwOldPermissions);
+		VirtualProtect(lpAddress, pSection->Misc.VirtualSize, PAGE_READWRITE, &dwOldPermissions);
 
 		ULONG64 rc4key[2] = { exe_configuration._key0, exe_configuration._key1 };
 
@@ -229,7 +222,7 @@ static BOOL WINAPI decrypt(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserv
 		for(DWORD dwPtr = 0; dwPtr < pSection->SizeOfRawData; dwPtr += 8, encptr += 2)
 			decrypt((uint32_t *) encptr, key);
 
-		_exe_VirtualProtect(lpAddress, pSection->Misc.VirtualSize, dwOldPermissions, &dwDummy);
+		VirtualProtect(lpAddress, pSection->Misc.VirtualSize, dwOldPermissions, &dwDummy);
 		//pSection++;
 
 	}
@@ -248,11 +241,11 @@ static BOOL WINAPI decrypt(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserv
 		{
 			// apply reloc in current section!
 			LPVOID lpAddress = rva2addr(pImageDosHeader, pImageNtHeaders32, (LPVOID) pSection->VirtualAddress);
-			_exe_VirtualProtect(lpAddress, pSection->Misc.VirtualSize, PAGE_READWRITE, &dwOldPermissions);
+			VirtualProtect(lpAddress, pSection->Misc.VirtualSize, PAGE_READWRITE, &dwOldPermissions);
 
 			ULONG ptrReloc = CALC_OFFSET(ULONG, pImageDosHeader, (ULONG) exe_configuration.lpRelocAddress);
 			Reloc_Process((LPVOID) pImageDosHeader, pImageNtHeaders32, pSection, (LPVOID) ptrReloc, exe_configuration.dwRelocSize, IMAGE_FIRST_SECTION(pImageNtHeaders32));
-			_exe_VirtualProtect(lpAddress, pSection->Misc.VirtualSize, dwOldPermissions, &dwDummy);
+			VirtualProtect(lpAddress, pSection->Misc.VirtualSize, dwOldPermissions, &dwDummy);
 		}
 	}
 
@@ -289,7 +282,7 @@ char*	_strVirtualProtect()
 struct _strings
 {
 	DWORD szKernel32[3];
-	char szVirtualProtect[0x20];
+	//char szVirtualProtect[0x20];
 	char szVirtualQuery[0x20];
 	char szGetModuleFileNameA[0x40];
 	char szGetModuleHandleA[0x40];
@@ -302,12 +295,12 @@ void WINAPI __fuckcrt0startup(struct _strings *ptr)
 	ptr->szKernel32[1] = 0x32334C45;
 	ptr->szKernel32[2] = 0x0;
 	
-	char szVirtualProtect[] = { 'V', 'i', 'r', 't', 'u', 'a', 'l', 'P', 'r', 'o', 't', 'e', 'c', 't', 0x00 };
+	//char szVirtualProtect[] = { 'V', 'i', 'r', 't', 'u', 'a', 'l', 'P', 'r', 'o', 't', 'e', 'c', 't', 0x00 };
 	char szVirtualQuery[] = { 'V', 'i', 'r', 't', 'u', 'a', 'l', 'Q', 'u', 'e', 'r', 'y', 0x00 };
 	char szGetModuleFileNameA[] = { 'G', 'e', 't', 'M', 'o', 'd', 'u', 'l', 'e', 'F', 'i', 'l', 'e', 'N', 'a', 'm', 'e', 'A', 0x00 };
 	char szGetModuleHandleA[] = { 'G', 'e', 't', 'M', 'o', 'd', 'u', 'l', 'e', 'H', 'a', 'n', 'd', 'l', 'e', 'A', 0x00 };
 
-	__memcpy(ptr->szVirtualProtect, szVirtualProtect, sizeof(szVirtualProtect));
+	//__memcpy(ptr->szVirtualProtect, szVirtualProtect, sizeof(szVirtualProtect));
 	__memcpy(ptr->szVirtualQuery, szVirtualQuery, sizeof(szVirtualQuery));
 	__memcpy(ptr->szGetModuleFileNameA, szGetModuleFileNameA, sizeof(szGetModuleFileNameA));
 	__memcpy(ptr->szGetModuleHandleA, szGetModuleHandleA, sizeof(szGetModuleHandleA));
@@ -321,9 +314,8 @@ void WINAPI __crt0Startup(DWORD dwParam)
 
 	__fuckcrt0startup(&init);
 		
-	HMODULE h = _exe_LoadLibraryA((char *) init.szKernel32);
-	VirtualProtect_ptr p = (VirtualProtect_ptr) _exe_GetProcAddress(h, init.szVirtualProtect);
-	VirtualQuery_ptr _vquery = (VirtualQuery_ptr) _exe_GetProcAddress(h, init.szVirtualQuery);
+	HMODULE h = LoadLibraryA((char *) init.szKernel32);
+	VirtualQuery_ptr _vquery = (VirtualQuery_ptr) GetProcAddress(h, init.szVirtualQuery);
 
 	MEMORY_BASIC_INFORMATION buffer;
 
@@ -336,24 +328,21 @@ void WINAPI __crt0Startup(DWORD dwParam)
 	DWORD ignore0 = 0x32323232;
 	DWORD ignore1 = 0x64646464;
 
-	p((LPVOID) newptr, buffer.RegionSize, PAGE_EXECUTE_READWRITE, &ignore0);
-	p((LPVOID) h, 0x1000, PAGE_READONLY, &ignore1);
-	_exe_VirtualProtect = p;
-	
+	VirtualProtect((LPVOID) newptr, buffer.RegionSize, PAGE_EXECUTE_READWRITE, &ignore0);
+	VirtualProtect((LPVOID) h, 0x1000, PAGE_READONLY, &ignore1);
+		
 	exe_g_hKernel32 = (HMODULE) _GETBASE();
 		
-	GetModuleHandleA_ptr _GetModuleHandleA = (GetModuleHandleA_ptr) _exe_GetProcAddress(h, init.szGetModuleHandleA);
+	GetModuleHandleA_ptr _GetModuleHandleA = (GetModuleHandleA_ptr) GetProcAddress(h, init.szGetModuleHandleA);
 
 	 //= _GetModuleHandleA(NULL);
 			
-	init.szVirtualProtect[7] = 'A';
+	/*init.szVirtualProtect[7] = 'A';
 	init.szVirtualProtect[8] = 'l';
 	init.szVirtualProtect[9] = 'l';
 	init.szVirtualProtect[0x0a] = 'o';
 	init.szVirtualProtect[0x0b] = 'c';
-	init.szVirtualProtect[0x0c] = 0x00;
-
-	_exe_VirtualAlloc = (VirtualAlloc_ptr) _exe_GetProcAddress(h, init.szVirtualProtect);
+	init.szVirtualProtect[0x0c] = 0x00;*/
 
 	LPBYTE lpEntry = (LPBYTE) _exe_CreateFileA;
 
@@ -361,7 +350,7 @@ void WINAPI __crt0Startup(DWORD dwParam)
 	{
 		__memcpy((char *)lpEntry+7, (char *)lpEntry+11, 14); 
 
-		LPVOID lpSymbol = _exe_GetProcAddress(h, (char *)(lpEntry+1));
+		LPVOID lpSymbol = GetProcAddress(h, (char *)(lpEntry+1));
 		*lpEntry++ = 0xB8;	// mov eax, imm32
 		(*(LPDWORD)lpEntry) = (DWORD)lpSymbol;
 		lpEntry+=4;

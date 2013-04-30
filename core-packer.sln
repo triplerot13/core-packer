@@ -3,6 +3,8 @@ Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "core-packer", "core-packer\core-packer.vcxproj", "{CFCDC238-E14C-43D7-AA69-03FF46BDC5D0}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "testcase", "testcase\testcase.vcxproj", "{86EC6272-454D-46DB-9B75-C927D3C270E2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -19,6 +21,12 @@ Global
 		{CFCDC238-E14C-43D7-AA69-03FF46BDC5D0}.Release|Win32.Build.0 = Release|Win32
 		{CFCDC238-E14C-43D7-AA69-03FF46BDC5D0}.Release|x64.ActiveCfg = Release|x64
 		{CFCDC238-E14C-43D7-AA69-03FF46BDC5D0}.Release|x64.Build.0 = Release|x64
+		{86EC6272-454D-46DB-9B75-C927D3C270E2}.Debug|Win32.ActiveCfg = Debug|Win32
+		{86EC6272-454D-46DB-9B75-C927D3C270E2}.Debug|Win32.Build.0 = Debug|Win32
+		{86EC6272-454D-46DB-9B75-C927D3C270E2}.Debug|x64.ActiveCfg = Debug|Win32
+		{86EC6272-454D-46DB-9B75-C927D3C270E2}.Release|Win32.ActiveCfg = Release|Win32
+		{86EC6272-454D-46DB-9B75-C927D3C270E2}.Release|Win32.Build.0 = Release|Win32
+		{86EC6272-454D-46DB-9B75-C927D3C270E2}.Release|x64.ActiveCfg = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -3,10 +3,13 @@
 #include "peasm/peasm.h"
 #include "peasm/pesection.h"
 
+#include "melt_random.h"
+#include "melt_section.h"
+
 #include "library.h"
 #include "macro.h"
 #include "rva.h"
-#include "rc4.h"
+#include "crypto/rc4.h"
 #include "symbols.h"
 #include "reloc.h"
 #include "patchutils.h"
@@ -49,86 +52,6 @@ void Patch_EXPORT_SYMBOL(LPVOID lpBaseBlock, LPBYTE lpInitialMem, DWORD dwSize, 
 	}
 }
 
-#define SECTION_RANDOM_NAME	15
-
-static char *szSectionNames[SECTION_RANDOM_NAME] = 
-{
-	".textbss",
-	".pages",
-	".visical",
-	".inferno",
-	".calc",
-	".notepad",
-	".word",
-	".viper0",
-	".venom",
-	".text0",
-	".uspack0",
-	".hermit",
-	".locals",
-	".stack1",
-	".GLOBAL"
-};
-
-/**
- *	Return size required for relocation
- **/
-size_t SizeOfRelocSection(LPVOID hProcessModule, PIMAGE_NT_HEADERS64 pSelf, PIMAGE_SECTION_HEADER pSection)
-{
-	size_t size = 0;
-
-	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
-
-	ULONGLONG dwImageBase = pSelf->OptionalHeader.ImageBase;
-
-	if (dwImageBase != (DWORD) hProcessModule)
-		dwImageBase = (DWORD) hProcessModule;
-
-
-	while(reloc != NULL)
-	{
-		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
-		{	// good! add this page!
-			size+= reloc->BlockSize;
-		}
-
-		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
-		if (reloc->BlockSize == 0) reloc = NULL;
-	}
-	return size;
-}
-
-char *szSectionName[] = { ".hermit\0", ".pedll32\0", ".pedll64\0", ".peexe32\0", ".peexe64\0" };
-
-PIMAGE_SECTION_HEADER lookup_core_section(PIMAGE_DOS_HEADER pImageDosHeader, PIMAGE_NT_HEADERS64 pImageNtHeaders64, BOOL dllTARGET)
-{
-	short NumberOfSections = pImageNtHeaders64->FileHeader.NumberOfSections;
-
-	char *szHermitName = szSectionName[2];
-
-	if (dllTARGET == FALSE)
-		szHermitName = szSectionName[4];
-
-	PIMAGE_SECTION_HEADER pResult = NULL;
-
-	for(PIMAGE_SECTION_HEADER pSection = IMAGE_FIRST_SECTION(pImageNtHeaders64); NumberOfSections > 0; NumberOfSections--, pSection++)
-	{
-		if (memcmp(szHermitName, pSection->Name, 8) == 0)
-		{
-			std::cout << szHermitName << "/64bit section found in code" << std::endl;
-			
-			std::cout << "\tSize of raw data: " << std::hex << pSection->SizeOfRawData << std::endl;
-			std::cout << "\t    Virtual size: " << std::hex << pSection->Misc.VirtualSize << std::endl;
-			std::cout << "\t             RVA: " << std::hex << pSection->VirtualAddress << std::endl;
-			std::cout << "\t Virtual Address: " << std::hex << rva2addr(pImageDosHeader, pImageNtHeaders64, CALC_OFFSET(LPVOID, pImageDosHeader, pSection->VirtualAddress)) << std::endl;
-
-			pResult = pSection;
-			break;
-		}
-	}
-
-	return pResult;
-}
 
 BOOL check_blacklist(PWIN32_FIND_DATA lpFindData)
 {
@@ -388,7 +311,7 @@ int main64(int argc, char *argv[])
 	
 	PIMAGE_SECTION_HEADER pDestSection = NULL;
 
-	char *szSectionName = szSectionNames[rand() % 15];
+	const char *szSectionName = random_section_name();
 	
 	int newVirtualSize = RoundUp(pUnpackerCode->Misc.VirtualSize + ((rand() % 16) * 1024), 1024);
 

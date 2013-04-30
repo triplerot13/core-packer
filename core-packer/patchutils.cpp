@@ -2,7 +2,7 @@
 #include "library.h"
 #include "macro.h"
 #include "rva.h"
-#include "rc4.h"
+#include "crypto/rc4.h"
 #include "symbols.h"
 
 DWORD NextPointerToRawData(PIMAGE_NT_HEADERS pHeader)

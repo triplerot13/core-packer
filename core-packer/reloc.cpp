@@ -1,7 +1,11 @@
-//#include <Windows.h>
-//#include "reloc.h"
+#include <Windows.h>
+#include "macro.h"
+#include "reloc.h"
+#include "peasm/peasm.h"
+#include "peasm/pesection.h"
+
 //#include "rva.h"
-//#include "macro.h"
+
 //#include "symbols.h"
 //
 //
@@ -248,3 +252,199 @@
 //}
 //
 //#endif
+
+DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection, LPVOID lpOutput, DWORD dwNewVirtualAddress, CPeAssembly *destination, PIMAGE_NT_HEADERS32 pNewFile)
+{
+	DWORD dwSize = 0;
+
+	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+	DWORD dwImageBase = pSelf->OptionalHeader.ImageBase;
+
+	if (dwImageBase != (DWORD) hProcessModule)
+		dwImageBase = (DWORD) hProcessModule;
+
+	while(reloc != NULL)
+	{
+		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		{	// good! add this page!
+			memcpy(lpOutput, reloc, reloc->BlockSize);
+			
+			relocation_block_t *newReloc= CALC_OFFSET(relocation_block_t *, lpOutput, 0);
+
+			newReloc->PageRVA = (reloc->PageRVA - pSection->VirtualAddress + dwNewVirtualAddress) & 0xfffff000;
+			
+			DWORD blocksize = newReloc->BlockSize - 8;
+			relocation_entry *entry = CALC_OFFSET(relocation_entry *, newReloc, 8);
+			
+			while(blocksize > 2)	// latest two bytes are "reloc terminator"
+			{	// fetch instruction and patch!
+				short type = ((*entry & 0xf000) >> 12);
+				long offset = (*entry & 0x0fff);
+				
+				offset = (dwNewVirtualAddress & 0x0fff) + offset;
+
+				*entry = (type << 12) | offset;
+
+				ULONG *ptr = (PULONG) destination->RawPointer(offset + newReloc->PageRVA);
+				
+				ULONG value = *ptr;
+				ULONG dwNewValue = 0;
+				DWORD dwRVA = (value - dwImageBase) & 0xfffff000;
+
+				switch(type)
+				{
+					case 0x03:
+						if (dwRVA != reloc->PageRVA)
+						{
+							value = value - dwImageBase;
+							value = value + pNewFile->OptionalHeader.ImageBase;
+						}
+						else
+						{
+							value = value - dwImageBase - reloc->PageRVA;
+							value = value + pNewFile->OptionalHeader.ImageBase + newReloc->PageRVA;
+						}
+						*ptr = value;
+						break;
+					case 0x0a:
+						//dwNewValue = value - pImageNtHeader->OptionalHeader.ImageBase + (ULONG64) pModule;
+						//*ptr = dwNewValue;
+						break;
+					case 0x00:
+						
+						break;
+				}
+				entry++;
+				blocksize -= 2;
+			}
+
+			lpOutput = CALC_OFFSET(LPVOID, lpOutput, reloc->BlockSize);
+
+			dwSize += reloc->BlockSize;
+		}
+
+		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
+		if (reloc->BlockSize == 0) reloc = NULL;
+	}
+	return dwSize;
+}
+
+
+DWORD Patch_Reloc(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection, LPVOID lpOutput, DWORD dwNewVirtualAddress, CPeAssembly *destination, PIMAGE_NT_HEADERS32 pNewFile)
+{
+	//DWORD dwSize = 0;
+
+	//relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+	//DWORD dwImageBase = pSelf->OptionalHeader.ImageBase;
+
+	//if (dwImageBase != (DWORD) hProcessModule)
+	//	dwImageBase = (DWORD) hProcessModule;
+
+	//while(reloc != NULL)
+	//{
+	//	if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+	//	{	// good! add this page!
+	//		//memcpy(lpOutput, reloc, reloc->BlockSize);
+	//		
+	//		relocation_block_t *newReloc= CALC_OFFSET(relocation_block_t *, reloc, 0);
+
+	//		//newReloc->PageRVA = reloc->PageRVA - pSection->VirtualAddress + dwNewVirtualAddress;
+	//		
+	//		DWORD blocksize = newReloc->BlockSize - 8;
+	//		relocation_entry *entry = CALC_OFFSET(relocation_entry *, newReloc, 8);
+	//		
+	//		while(blocksize > 0)
+	//		{	// fetch instruction and patch!
+	//			short type = ((*entry & 0xf000) >> 12);
+	//			long offset = (*entry & 0x0fff);
+
+	//			ULONG *ptr = (PULONG) destination->RawPointer(offset + newReloc->PageRVA);
+	//			ULONG value = *ptr;
+	//			ULONG dwNewValue = 0;
+
+	//			switch(type)
+	//			{
+	//				case 0x03:
+	//					value = value - dwImageBase - reloc->PageRVA;
+	//					//value = value + pNewFile->OptionalHeader.ImageBase + pSection->VirtualAddress;
+	//					*ptr = value;
+	//					break;
+	//				case 0x0a:
+	//					//dwNewValue = value - pImageNtHeader->OptionalHeader.ImageBase + (ULONG64) pModule;
+	//					//*ptr = dwNewValue;
+	//					break;
+	//			}
+	//			entry++;
+	//			blocksize -= 2;
+	//		}
+
+	//		//lpOutput = CALC_OFFSET(LPVOID, lpOutput, reloc->BlockSize);
+
+	//		dwSize += reloc->BlockSize;
+	//	}
+
+	//	reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
+	//	if (reloc->BlockSize == 0) reloc = NULL;
+	//}
+	//return dwSize;
+
+	return 0;
+}
+
+
+/**
+ *	Return size required for relocation
+ **/
+size_t SizeOfRelocSection(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection)
+{
+	size_t size = 0;
+
+	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+	DWORD dwImageBase = pSelf->OptionalHeader.ImageBase;
+
+	if (dwImageBase != (DWORD) hProcessModule)
+		dwImageBase = (DWORD) hProcessModule;
+	
+	while(reloc != NULL)
+	{
+		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		{	// good! add this page!
+			size+= reloc->BlockSize;
+		}
+
+		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
+		if (reloc->BlockSize == 0) reloc = NULL;
+	}
+	return size;
+}
+
+/**
+ *	Return size required for relocation
+ **/
+size_t SizeOfRelocSection(LPVOID hProcessModule, PIMAGE_NT_HEADERS64 pSelf, PIMAGE_SECTION_HEADER pSection)
+{
+	size_t size = 0;
+
+	relocation_block_t *reloc = CALC_OFFSET(relocation_block_t *, hProcessModule, pSelf->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+	ULONGLONG dwImageBase = pSelf->OptionalHeader.ImageBase;
+
+	if (dwImageBase != (ULONGLONG) hProcessModule)
+		dwImageBase = (ULONGLONG) hProcessModule;
+
+
+	while(reloc != NULL)
+	{
+		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		{	// good! add this page!
+			size+= reloc->BlockSize;
+		}
+
+		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
+		if (reloc->BlockSize == 0) reloc = NULL;
+	}
+	return size;
+}

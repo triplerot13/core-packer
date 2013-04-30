@@ -6,6 +6,18 @@
 
 extern BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved);
 
+int filter(unsigned int code, struct _EXCEPTION_POINTERS *ep)
+{
+	std::cout << "caught exception. " << std::endl;
+	std::cout << "\t[EIP] = " << std::hex << ep->ContextRecord->Eip << std::endl;
+	std::cout << "\t[ESP] = " << std::hex << ep->ContextRecord->Esp << std::endl;
+	std::cout << "\t[EBP] = " << std::hex << ep->ContextRecord->Ebp << std::endl;
+	std::cout << "\t[EFLAGS] = " << std::hex << ep->ContextRecord->EFlags << std::endl;
+
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
+
 int main(int argc, char *argv[])
 {
 #ifdef _BUILD32
@@ -38,11 +50,18 @@ int main(int argc, char *argv[])
 	extern int main32(int, char*argv[]);
 	extern int unpack32(int, char*argv[]);
 
-	if (argv[1][0] == '-' && argv[1][1] == 'u')
-		return unpack32(argc, argv);
-	else
+	__try
+	{
+		if (argv[1][0] == '-' && argv[1][1] == 'u')
+			return unpack32(argc, argv);
+		else
+			return main32(argc, argv);
 		return main32(argc, argv);
-	return main32(argc, argv);
+	}
+	__except(filter(GetExceptionCode(), GetExceptionInformation())) 
+	{
+		return -1;
+	}
 #endif
 
 #else

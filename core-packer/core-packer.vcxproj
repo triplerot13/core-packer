@@ -150,17 +150,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="crypto\rc4.h" />
+    <ClInclude Include="crypto\tea.h" />
     <ClInclude Include="decrypt.h" />
     <ClInclude Include="dll32.h" />
     <ClInclude Include="dll64.h" />
     <ClInclude Include="library.h" />
-    <ClInclude Include="LoadLibrary.h" />
     <ClInclude Include="macro.h" />
+    <ClInclude Include="melt_random.h" />
+    <ClInclude Include="melt_section.h" />
     <ClInclude Include="patchutils.h" />
     <ClInclude Include="peasm\peasm.h" />
     <ClInclude Include="peasm\pesection.h" />
     <ClInclude Include="peasm\types.h" />
-    <ClInclude Include="rc4.h" />
     <ClInclude Include="reloc.h" />
     <ClInclude Include="rva.h" />
     <ClInclude Include="symbols.h" />
@@ -188,9 +190,10 @@
     <ClInclude Include="tclap\Visitor.h" />
     <ClInclude Include="tclap\XorHandler.h" />
     <ClInclude Include="tclap\ZshCompletionOutput.h" />
-    <ClInclude Include="tea.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="crypto\rc4.cpp" />
+    <ClCompile Include="crypto\tea.cpp" />
     <ClCompile Include="DllEntryPoint.cpp" />
     <ClCompile Include="DllEntryPoint32.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
@@ -201,7 +204,6 @@
     </ClCompile>
     <ClCompile Include="ExeEntryPoint32.cpp" />
     <ClCompile Include="library.cpp" />
-    <ClCompile Include="LoadLibrary.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="main32.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
@@ -210,16 +212,19 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="melt_core.cpp" />
+    <ClCompile Include="melt_random.cpp" />
+    <ClCompile Include="melt_section.cpp" />
     <ClCompile Include="patchutils.cpp" />
     <ClCompile Include="peasm\peasm.cpp" />
+    <ClCompile Include="peasm\peiat.cpp" />
     <ClCompile Include="peasm\pesection.cpp" />
     <ClCompile Include="peasm\pe_amd64.cpp" />
+    <ClCompile Include="peasm\mz_i386.cpp" />
     <ClCompile Include="peasm\pe_i386.cpp" />
-    <ClCompile Include="rc4.cpp" />
     <ClCompile Include="reloc.cpp" />
     <ClCompile Include="rva.cpp" />
     <ClCompile Include="symbols.cpp" />
-    <ClCompile Include="tea.cpp" />
     <ClCompile Include="unpack32.cpp" />
   </ItemGroup>
   <ItemGroup>

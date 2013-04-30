@@ -28,6 +28,12 @@
     <Filter Include="Source Files\stub">
       <UniqueIdentifier>{1673165e-ff14-4ff2-81cc-4a01c1c3647f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\crypto">
+      <UniqueIdentifier>{38d22a04-5d06-4fdb-b93d-cdb29545d7ea}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\crypto">
+      <UniqueIdentifier>{aa2f801c-a67a-451b-b457-03d0f1e131f1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="tclap\Arg.h">
@@ -108,13 +114,7 @@
     <ClInclude Include="library.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="LoadLibrary.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="macro.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="rc4.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="reloc.h">
@@ -124,9 +124,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="symbols.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="tea.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="dll32.h">
@@ -147,12 +144,21 @@
     <ClInclude Include="peasm\types.h">
       <Filter>Header Files\peasm</Filter>
     </ClInclude>
+    <ClInclude Include="crypto\rc4.h">
+      <Filter>Header Files\crypto</Filter>
+    </ClInclude>
+    <ClInclude Include="crypto\tea.h">
+      <Filter>Header Files\crypto</Filter>
+    </ClInclude>
+    <ClInclude Include="melt_random.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="melt_section.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="library.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="LoadLibrary.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="main.cpp">
@@ -164,9 +170,6 @@
     <ClCompile Include="main64.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="rc4.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="reloc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -174,9 +177,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="symbols.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="tea.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="patchutils.cpp">
@@ -204,6 +204,30 @@
       <Filter>Source Files\peasm</Filter>
     </ClCompile>
     <ClCompile Include="peasm\pe_amd64.cpp">
+      <Filter>Source Files\peasm</Filter>
+    </ClCompile>
+    <ClCompile Include="unpack32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="crypto\rc4.cpp">
+      <Filter>Source Files\crypto</Filter>
+    </ClCompile>
+    <ClCompile Include="crypto\tea.cpp">
+      <Filter>Source Files\crypto</Filter>
+    </ClCompile>
+    <ClCompile Include="melt_section.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="melt_random.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="melt_core.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="peasm\mz_i386.cpp">
+      <Filter>Source Files\peasm</Filter>
+    </ClCompile>
+    <ClCompile Include="peasm\peiat.cpp">
       <Filter>Source Files\peasm</Filter>
     </ClCompile>
   </ItemGroup>

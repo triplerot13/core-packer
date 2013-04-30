@@ -27,12 +27,16 @@ public:
 	bool	PatchDword(virtualaddress_t	VirtualAddress, uint32_t *in);
 	bool	PatchQWord(virtualaddress_t	VirtualAddress, uint64_t *in);
 
+
+	bool	read(void *destination, virtualaddress_t	va, size_t size);
+	bool	write(virtualaddress_t	va, void *origin, size_t size);
+
 	inline virtualaddress_t	VirtualAddress() { return _base; };
 	inline void SetNewVirtualAddress(virtualaddress_t va) { _base = va; _header.VirtualAddress = va; };
 
-	inline virtualaddress_t	VirtualSize() { return _size; };
+	inline size_t VirtualSize() { return _size; };
 
-	inline virtualaddress_t SizeOfRawData() { return _header.SizeOfRawData; };
+	inline size_t SizeOfRawData() { return _header.SizeOfRawData; };
 
 	inline virtualaddress_t PointerToRawData() { return _header.PointerToRawData; };
 	inline void SetPointerToRawData(virtualaddress_t value) { _header.PointerToRawData = value; };
@@ -53,7 +57,7 @@ private:
 	CPeAssembly	*_parent;
 	IMAGE_SECTION_HEADER _header;
 	virtualaddress_t	_base;
-	virtualaddress_t	_size;
+	size_t	_size;
 
 	void* _rawData;
 };

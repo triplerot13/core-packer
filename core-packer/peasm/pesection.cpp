@@ -31,6 +31,9 @@ CPeSection::~CPeSection()
 		VirtualFree(_rawData, _size, MEM_RELEASE);
 }
 
+/**
+ *	\!ReadByte
+ **/
 bool CPeSection::ReadByte(virtualaddress_t	VirtualAddress, uint8_t *out)
 {
 	memcpy(out, CALC_OFFSET(LPVOID, _rawData, VirtualAddress - _base), 1);
@@ -84,7 +87,29 @@ bool CPeSection::PatchQWord(virtualaddress_t	VirtualAddress, uint64_t *in)
 	return true;
 }
 
+/**
+ *	\!read
+ *	read a block of data into destination buffer!
+ **/
+bool CPeSection::read(void *destination, virtualaddress_t	va, size_t size)
+{
+	if (memcpy(destination, CALC_OFFSET(LPVOID, _rawData, va - _base), size) == NULL)
+		return false;
 
+	return true;
+}
+
+/**
+ *	\!write
+ *	write a block of data into storage
+ **/
+bool CPeSection::write(virtualaddress_t	va, void *origin, size_t size)
+{
+	if (memcpy(CALC_OFFSET(LPVOID, _rawData, va - _base), origin, size) == NULL)
+		return false;
+
+	return true;
+}
 
 void CPeSection::AddSize(size_t size)
 {

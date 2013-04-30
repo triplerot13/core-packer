@@ -1,7 +1,7 @@
 #include <Windows.h>
 #include "rva.h"
 #include "reloc.h"
-#include "rc4.h"
+#include "crypto/rc4.h"
 #include "macro.h"
 
 #pragma section(".hermit", read, execute)

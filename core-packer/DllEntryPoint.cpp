@@ -1,6 +1,6 @@
 #include <Windows.h>
 #include "rva.h"
-#include "reloc.h"
+#include "melt_reloc.h"
 #include "crypto/rc4.h"
 #include "macro.h"
 

@@ -7,8 +7,6 @@ code SEGMENT PUBLIC READ EXECUTE ALIAS('.pedll32')
 ;public _VirtualProtect
 ;public _VirtualAlloc
 public g_hKernel32
-public _dll32_LoadLibraryA
-public _dll32_GetProcAddress
 public _EntryPoint
 
 public _FakeEntryPoint0
@@ -38,60 +36,6 @@ g_hKernel32	dd	?	; symbol!
 ;	db 0e9h
 ;	dq 0BABECAFEBAD00002h
 ;_VirtualAlloc ENDP
-
-; LoadLibraryA
-_dll32_LoadLibraryA PROC param1: DWORD
-	mov esp, ebp
-	pop ebp
-	mov eax, dword ptr [g_hKernel32]
-	add eax, 11223340h
-	jmp dword ptr ds:[eax]
-	nop
-	nop
-	nop
-	nop
-	nop
-_dll32_LoadLibraryA ENDP
-
-_dll32_GetProcAddress PROC param1: DWORD, param2: DWORD
-	mov esp, ebp
-	pop ebp
-	mov eax, dword ptr [g_hKernel32]
-	add eax, 11223341h
-	jmp dword ptr [eax]
-	nop
-	nop
-	nop
-	nop
-	nop
-_dll32_GetProcAddress ENDP
-
-
-_SetFilePointer PROC param1: DWORD, param2: DWORD, param3: DWORD, p4: DWORD
-	mov esp, ebp
-	pop	ebp
-	mov eax, dword ptr [g_hKernel32]
-	add eax, 11223342h
-	jmp dword ptr [eax]
-	nop
-	nop
-	nop
-	nop
-	nop
-_SetFilePointer ENDP
-
-_CloseHandle PROC param1: DWORD
-	mov esp, ebp
-	pop	ebp
-	mov eax, dword ptr [g_hKernel32]
-	add eax, 11223343h
-	jmp dword ptr [eax]
-	nop
-	nop
-	nop
-	nop
-	nop
-_CloseHandle ENDP
 
 _ReadFile PROC param1: DWORD, param2: DWORD, param3: DWORD, p4: DWORD, p5: DWORD
 	mov esp, ebp

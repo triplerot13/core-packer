@@ -163,7 +163,7 @@
     <ClInclude Include="peasm\peasm.h" />
     <ClInclude Include="peasm\pesection.h" />
     <ClInclude Include="peasm\types.h" />
-    <ClInclude Include="reloc.h" />
+    <ClInclude Include="melt_reloc.h" />
     <ClInclude Include="rva.h" />
     <ClInclude Include="symbols.h" />
     <ClInclude Include="tclap\Arg.h" />
@@ -213,7 +213,9 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="melt_core.cpp" />
+    <ClCompile Include="melt_core64.cpp" />
     <ClCompile Include="melt_random.cpp" />
+    <ClCompile Include="melt_scout.cpp" />
     <ClCompile Include="melt_section.cpp" />
     <ClCompile Include="patchutils.cpp" />
     <ClCompile Include="peasm\peasm.cpp" />
@@ -222,7 +224,7 @@
     <ClCompile Include="peasm\pe_amd64.cpp" />
     <ClCompile Include="peasm\mz_i386.cpp" />
     <ClCompile Include="peasm\pe_i386.cpp" />
-    <ClCompile Include="reloc.cpp" />
+    <ClCompile Include="melt_reloc.cpp" />
     <ClCompile Include="rva.cpp" />
     <ClCompile Include="symbols.cpp" />
     <ClCompile Include="unpack32.cpp" />

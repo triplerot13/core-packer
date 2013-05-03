@@ -6,6 +6,8 @@
 #include "crypto/tea.h"
 #include "macro.h"
 
+//extern "C" IMAGE_DOS_HEADER __ImageBase;
+
 #pragma section(".peexe32", read, write, execute)
 
 typedef short relocation_entry;
@@ -316,6 +318,8 @@ void WINAPI __crt0Startup(DWORD dwParam)
 		
 	HMODULE h = LoadLibraryA((char *) init.szKernel32);
 	VirtualQuery_ptr _vquery = (VirtualQuery_ptr) GetProcAddress(h, init.szVirtualQuery);
+	
+	//DWORD dw = (DWORD) &__ImageBase;
 
 	MEMORY_BASIC_INFORMATION buffer;
 

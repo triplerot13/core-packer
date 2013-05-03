@@ -117,9 +117,6 @@
     <ClInclude Include="macro.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="reloc.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="rva.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -156,6 +153,9 @@
     <ClInclude Include="melt_section.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="melt_reloc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="library.cpp">
@@ -168,9 +168,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="main64.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="reloc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="rva.cpp">
@@ -229,6 +226,15 @@
     </ClCompile>
     <ClCompile Include="peasm\peiat.cpp">
       <Filter>Source Files\peasm</Filter>
+    </ClCompile>
+    <ClCompile Include="melt_reloc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="melt_scout.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="melt_core64.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

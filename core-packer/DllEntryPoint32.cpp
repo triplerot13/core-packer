@@ -7,9 +7,11 @@
 #include "symbols.h"
 #include "dll32.h"
 
-#include "reloc.h"
+#include "melt_reloc.h"
 #include "macro.h"
 #include "decrypt.h"
+
+//extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 #pragma section(".pedll32", read, write, execute)
 
@@ -448,7 +450,7 @@ static void _InitializeCriticalSection(HMODULE h, LPCRITICAL_SECTION lpCriticalS
 {
 	char szApi[] = { 'I', 'n', 'i', 't', 'i', 'a', 'l', 'i', 'z', 'e', 'C', 'r', 'i', 't', 'i', 'c', 'a', 'l', 'S', 'e', 'c', 't', 'i', 'o', 'n', 0x00 };
 
-	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) _dll32_GetProcAddress(h, szApi);
+	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) GetProcAddress(h, szApi);
 
 	f(lpCriticalSection);
 }
@@ -458,7 +460,7 @@ static void _LeaveCriticalSection(HMODULE h, LPCRITICAL_SECTION lpCriticalSectio
 {
 	char szApi[] = { 'L', 'e', 'a', 'v', 'e', 'C', 'r', 'i', 't', 'i', 'c', 'a', 'l', 'S', 'e', 'c', 't', 'i', 'o', 'n', 0x00 };
 
-	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) _dll32_GetProcAddress(h, szApi);
+	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) GetProcAddress(h, szApi);
 
 	f(lpCriticalSection);
 }
@@ -468,7 +470,7 @@ static void _DeleteCriticalSection(HMODULE h, LPCRITICAL_SECTION lpCriticalSecti
 {
 	char szApi[] = { 'D', 'e', 'l', 'e', 't', 'e', 'C', 'r', 'i', 't', 'i', 'c', 'a', 'l', 'S', 'e', 'c', 't', 'i', 'o', 'n', 0x00 };
 
-	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) _dll32_GetProcAddress(h, szApi);
+	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) GetProcAddress(h, szApi);
 
 	f(lpCriticalSection);
 }
@@ -478,7 +480,7 @@ static void _EnterCriticalSection(HMODULE h, LPCRITICAL_SECTION lpCriticalSectio
 {
 	char szApi[] = { 'E', 'n', 't', 'e', 'r', 'C', 'r', 'i', 't', 'i', 'c', 'a', 'l', 'S', 'e', 'c', 't', 'i', 'o', 'n', 0x00 };
 
-	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) _dll32_GetProcAddress(h, szApi);
+	InitializeCriticalSection_ptr f = (InitializeCriticalSection_ptr) GetProcAddress(h, szApi);
 
 	f(lpCriticalSection);
 }
@@ -487,7 +489,7 @@ static void _EnterCriticalSection(HMODULE h, LPCRITICAL_SECTION lpCriticalSectio
 static HMODULE get_Kernel32(void)
 {
 	char szKernel32[] = { 'K', 'E', 'R', 'N', 'E', 'L', '3', '2', 0x00 };
-	return _dll32_LoadLibraryA(szKernel32);
+	return LoadLibraryA(szKernel32);
 }
 
 #pragma code_seg(".pedll32")
@@ -498,6 +500,9 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserve
 	char szGetModuleFileNameA[] = { 'G', 'e', 't', 'M', 'o', 'd', 'u', 'l', 'e', 'F', 'i', 'l', 'e', 'N', 'a', 'm', 'e', 'A', 0x00 };
 
 	typedef BOOL (WINAPI *DisableThreadLibraryCalls_ptr)(HMODULE hModule);
+
+
+	//DWORD dx = (DWORD) &__ImageBase;
 
 	// find patterns!
 	PIMAGE_DOS_HEADER pDosHeader = (PIMAGE_DOS_HEADER) hinstDLL;
@@ -511,7 +516,7 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserve
 			g_hKernel32 = hinstDLL;
 
 			HMODULE h = get_Kernel32();
-			_VirtualProtect = (VirtualProtect_ptr) _dll32_GetProcAddress(h, szVirtualProtect);
+			_VirtualProtect = (VirtualProtect_ptr) GetProcAddress(h, szVirtualProtect);
 
 			_InitializeCriticalSection(h, &_critical_section);
 						
@@ -522,9 +527,9 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserve
 			szVirtualProtect[0x0b] = 'c';
 			szVirtualProtect[0x0c] = 0x00;
 
-			_VirtualAlloc = (VirtualAlloc_ptr) _dll32_GetProcAddress(h, szVirtualProtect);
+			_VirtualAlloc = (VirtualAlloc_ptr) GetProcAddress(h, szVirtualProtect);
 
-			DisableThreadLibraryCalls_ptr _DisableThreadLibraryCalls = (DisableThreadLibraryCalls_ptr) _dll32_GetProcAddress(h, szDisableThreadLibraryCalls);
+			DisableThreadLibraryCalls_ptr _DisableThreadLibraryCalls = (DisableThreadLibraryCalls_ptr) GetProcAddress(h, szDisableThreadLibraryCalls);
 			_DisableThreadLibraryCalls(hinstDLL);
 			//decrypt(hinstDLL, fdwReason, lpvReserved);
 			
@@ -550,7 +555,7 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserve
 extern "C" 
 LPVOID WINAPI DELAYDECRYPT(DWORD dwX)
 {
-	struct _vtbl vtable = { _VirtualProtect, _VirtualAlloc, _CreateFileA, _SetFilePointer };
+	struct _vtbl vtable = { _VirtualProtect, _VirtualAlloc, _CreateFileA, &SetFilePointer };
 
 	_EnterCriticalSection(get_Kernel32(), &_critical_section);
 
@@ -574,7 +579,7 @@ LPVOID WINAPI DELAYDECRYPT(DWORD dwX)
 extern "C"
 void WINAPI DELAYENCRYPT()
 {
-	struct _vtbl vtable = { _VirtualProtect, _VirtualAlloc, _CreateFileA, _SetFilePointer };
+	struct _vtbl vtable = { _VirtualProtect, _VirtualAlloc, _CreateFileA, &SetFilePointer };
 	g_decrypted = 2;
 	decrypt(&vtable, g_hKernel32, DLL_PROCESS_ATTACH, NULL);
 }

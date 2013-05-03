@@ -13,7 +13,7 @@
 #include "dll32.h"
 #include "crypto/tea.h"
 #include "patchutils.h"
-#include "reloc.h"
+#include "melt_reloc.h"
 
 #ifdef _BUILD32
 
@@ -362,6 +362,7 @@ int main32(int argc, char *argv[])
 	if (pTarget->IsDLL())
 	{
 		pTargetSection = pTarget->AddSection(szSectionName, 0x0, newVirtualSize);	// move section in "head"
+		fix_iat_symbol(pImageDosHeader, pImageNtHeaders32,  pUnpackerCode, 0x0, pTarget);
 	}
 	else if (pTarget->IsEXE())
 	{
@@ -744,8 +745,8 @@ int main32(int argc, char *argv[])
 	if (pTarget->IsDLL())
 	{	// DLL ! FIX entry point
 		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_EntryPoint, 0x10, AddressOfEntryPoint-0x1000);
-		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_LoadLibraryA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"));
-		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_GetProcAddress, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress"));
+		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_LoadLibraryA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"));
+		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_GetProcAddress, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress"));
 		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GetModuleFileNameA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetModuleFileNameA"));
 	}
 	else
@@ -777,9 +778,14 @@ int main32(int argc, char *argv[])
 		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_CreateFileA : &_exe_CreateFileA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "CreateFileA"));
 	}
 
-	Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_SetFilePointer : &_exe_SetFilePointer, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "SetFilePointer"));
 	Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_ReadFile : &_exe_ReadFile, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "ReadFile"));
-	Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (pTarget->IsDLL()) ? &_CloseHandle : &_exe_CloseHandle, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "CloseHandle"));
+
+
+	if (pTarget->IsDLL() == FALSE)
+	{	// only for exe file
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_SetFilePointer, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "SetFilePointer"));
+		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_CloseHandle, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "CloseHandle"));
+	}
 
 	Patch_MARKER_QWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key0, passKeyPtr[0]);
 	Patch_MARKER_QWORD(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key1, passKeyPtr[1]);

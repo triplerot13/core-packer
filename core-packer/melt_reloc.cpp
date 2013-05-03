@@ -1,6 +1,6 @@
 #include <Windows.h>
 #include "macro.h"
-#include "reloc.h"
+#include "melt_reloc.h"
 #include "peasm/peasm.h"
 #include "peasm/pesection.h"
 
@@ -253,6 +253,14 @@
 //
 //#endif
 
+BOOL page_in_range(DWORD PageRVA, DWORD va, DWORD size)
+{
+	if (PageRVA >= va && PageRVA < (va + size))
+		return TRUE;
+
+	return FALSE;
+}
+
 DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMAGE_SECTION_HEADER pSection, LPVOID lpOutput, DWORD dwNewVirtualAddress, CPeAssembly *destination, PIMAGE_NT_HEADERS32 pNewFile)
 {
 	DWORD dwSize = 0;
@@ -264,9 +272,11 @@ DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIM
 	if (dwImageBase != (DWORD) hProcessModule)
 		dwImageBase = (DWORD) hProcessModule;
 
+	DWORD dwNewVABASE = 0;
+
 	while(reloc != NULL)
 	{
-		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		if (page_in_range(reloc->PageRVA, pSection->VirtualAddress, pSection->Misc.VirtualSize))
 		{	// good! add this page!
 			memcpy(lpOutput, reloc, reloc->BlockSize);
 			
@@ -274,14 +284,26 @@ DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIM
 
 			newReloc->PageRVA = (reloc->PageRVA - pSection->VirtualAddress + dwNewVirtualAddress) & 0xfffff000;
 			
+			if (dwNewVABASE == 0) // 
+				dwNewVABASE = dwNewVirtualAddress;
+			else	//
+				dwNewVABASE += 0x1000;
+
 			DWORD blocksize = newReloc->BlockSize - 8;
 			relocation_entry *entry = CALC_OFFSET(relocation_entry *, newReloc, 8);
 			
-			while(blocksize > 2)	// latest two bytes are "reloc terminator"
+			while(blocksize > 0)	// latest two bytes are "reloc terminator"
 			{	// fetch instruction and patch!
 				short type = ((*entry & 0xf000) >> 12);
 				long offset = (*entry & 0x0fff);
 				
+				if (blocksize == 2 && type == 0) // ABSOLUTE RELOC? PAGE ALIGNMENT!
+				{
+					blocksize -= 2;
+					entry++;
+					continue;
+				}
+
 				offset = (dwNewVirtualAddress & 0x0fff) + offset;
 
 				*entry = (type << 12) | offset;
@@ -295,7 +317,7 @@ DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIM
 				switch(type)
 				{
 					case 0x03:
-						if (dwRVA != reloc->PageRVA)
+						if (page_in_range(dwRVA, pSection->VirtualAddress, pSection->Misc.VirtualSize) == FALSE)
 						{
 							value = value - dwImageBase;
 							value = value + pNewFile->OptionalHeader.ImageBase;
@@ -322,6 +344,7 @@ DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIM
 			lpOutput = CALC_OFFSET(LPVOID, lpOutput, reloc->BlockSize);
 
 			dwSize += reloc->BlockSize;
+			//dwNewVirtualAddress += 0x1000;
 		}
 
 		reloc = CALC_OFFSET(relocation_block_t *, reloc, reloc->BlockSize);
@@ -410,7 +433,7 @@ size_t SizeOfRelocSection(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIMA
 	
 	while(reloc != NULL)
 	{
-		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		if (page_in_range(reloc->PageRVA, pSection->VirtualAddress, pSection->Misc.VirtualSize))
 		{	// good! add this page!
 			size+= reloc->BlockSize;
 		}
@@ -438,7 +461,7 @@ size_t SizeOfRelocSection(LPVOID hProcessModule, PIMAGE_NT_HEADERS64 pSelf, PIMA
 
 	while(reloc != NULL)
 	{
-		if (reloc->PageRVA >= pSection->VirtualAddress && reloc->PageRVA < (pSection->VirtualAddress + pSection->Misc.VirtualSize))
+		if (page_in_range(reloc->PageRVA, pSection->VirtualAddress, pSection->Misc.VirtualSize))
 		{	// good! add this page!
 			size+= reloc->BlockSize;
 		}

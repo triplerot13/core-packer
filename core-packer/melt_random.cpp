@@ -15,6 +15,10 @@ static BOOL check_blacklist(PWIN32_FIND_DATA lpFindData)
 {
 	if (_strcmpi(lpFindData->cFileName, "compobj.dll") == 0)
 		return TRUE;
+
+	if (_strcmpi(lpFindData->cFileName, "avifile.dll") == 0)
+		return TRUE;
+
 	return FALSE;
 }
 

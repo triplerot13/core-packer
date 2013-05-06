@@ -227,27 +227,6 @@ DWORD get_iat_value(struct _IAT_ENTRY *module, int size, char *name)
 	return 0;
 }
 
-void Patch_EXPORT_SYMBOL(LPVOID lpBaseBlock, LPBYTE lpInitialMem, DWORD dwSize, LPVOID lpSignature, DWORD newOffset, DWORD oldOffset)
-{
-	LPVOID lpInitialByte = FindBlockMem((LPBYTE) lpInitialMem, dwSize, lpSignature, 0x12);
-
-	if (lpInitialByte != NULL)
-	{
-		for(int i = 0; i < 0x20; i++)
-		{
-			DWORD dwMarker = 0x10001000;
-			if (memcmp(CALC_OFFSET(LPVOID, lpInitialByte, i), &dwMarker, sizeof(DWORD))	== 0)
-			{
-				LPDWORD c = CALC_OFFSET(LPDWORD, lpInitialByte, i);
-				*c = oldOffset;
-				return;
-			}
-		}
-
-	}
-
-}
-
 int main32(int argc, char *argv[])
 {
 	srand(GetTickCount());	// initialize for (rand)
@@ -573,28 +552,8 @@ int main32(int argc, char *argv[])
 		DataDir[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG].Size = 0;
 	}
 
-	PIMAGE_EXPORT_DIRECTORY ExportDirectory =  
-		(PIMAGE_EXPORT_DIRECTORY) pTarget->RawPointer(DataDir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
-		
-
-	LPDWORD AddressOfFunctions = NULL;
-	
-	if (ExportDirectory != NULL)
-	{
-		 AddressOfFunctions = (LPDWORD) pTarget->RawPointer(ExportDirectory->AddressOfFunctions);
-	}
-	else
-	{
-		ExportDirectory = NULL;
-	}
-
-
-	ULONG *table = NULL;
-
-	if (pTarget->IsDLL()) 
-		table = dll32_FakeExport;
-	else
-		table = exe32_FakeExport;
+	// select EXPORT_DIRECTORY entry points
+	ULONG *table = (pTarget->IsDLL()) ? table = dll32_FakeExport : table = exe32_FakeExport;
 
 	LPVOID lpRawSource = rva2addr(pImageDosHeader, pImageNtHeaders32, CALC_OFFSET(LPVOID, pImageDosHeader, pUnpackerCode->VirtualAddress));
 	
@@ -660,53 +619,14 @@ int main32(int argc, char *argv[])
 	 **/
 	if (pTarget->IsDLL())
 	{	// DLL - Patch 
-		for(int i=0; i < ExportDirectory->NumberOfFunctions; i++)
-		{
-			ULONG exportRVA = table[i];
+		extern void MELT_EXPORT_TABLE_DLL(CPeAssembly *pTarget, CPeSection *pTargetSection, LPVOID lpRawDestin, int basesize, ULONG *table, PIMAGE_DOS_HEADER pImageDosHeader, PIMAGE_SECTION_HEADER pUnpackerCode);
 
-			if (exportRVA == NULL)
-			{
-				std::cout << "Warning -> more exports into module!" << std::endl;
-				continue;	// no more symbols!
-			}
-
-			ULONG exportSymbolEntryPoint = exportRVA - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
-		
-			exportSymbolEntryPoint = pTargetSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pTargetNtHeader->OptionalHeader.SectionAlignment;
-		
-			DWORD dwOldValue = AddressOfFunctions[i];
-			AddressOfFunctions[i] = exportSymbolEntryPoint;
-		
-			Patch_EXPORT_SYMBOL(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, (LPVOID) table[i], exportSymbolEntryPoint, dwOldValue - 0x1000);
-		}
+		MELT_EXPORT_TABLE_DLL(pTarget, pTargetSection, lpRawDestin, basesize, table, pImageDosHeader, pUnpackerCode);
 	}
 	else
-	{	// EXE - overwrite "export"
-		int stubsize = (int)(table[1] - table[0]);
-
-		PIMAGE_DATA_DIRECTORY dir = pTarget->DataDirectory();
-
-		BYTE watermark[8];
-
-		if (dir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress != 0)
-		{
-			PIMAGE_EXPORT_DIRECTORY pExportDir = (PIMAGE_EXPORT_DIRECTORY) pTarget->RawPointer(dir[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
-
-			memcpy(watermark, pTarget->RawPointer(pExportDir->Name), 8);
-		}
-
-		for(int i = 0; i < (sizeof(table) / sizeof(ULONG)); i++)
-		{	//
-			ULONG exportRVA = table[i];
-			ULONG exportSymbolEntryPoint = exportRVA - ((ULONG) pImageDosHeader) - pUnpackerCode->VirtualAddress; // - pImageNtHeaders64->OptionalHeader.SectionAlignment); // 
-		
-			exportSymbolEntryPoint = pTargetSection->VirtualAddress() + basesize + exportSymbolEntryPoint; // - pTargetNtHeader->OptionalHeader.SectionAlignment;
-
-			LPVOID lp = FindBlockMem((LPBYTE)lpRawDestin, pUnpackerCode->SizeOfRawData, (LPVOID) table[i], stubsize);
-
-			if (lp != NULL)
-				memset(lp, 0xCC, stubsize);
-		}
+	{	
+		extern void MELT_EXPORT_TABLE_EXE(CPeAssembly *pTarget, CPeSection *pTargetSection, LPVOID lpRawDestin, int basesize, ULONG *table, PIMAGE_DOS_HEADER pImageDosHeader, PIMAGE_SECTION_HEADER pUnpackerCode);
+		MELT_EXPORT_TABLE_EXE(pTarget, pTargetSection, lpRawDestin, basesize, table, pImageDosHeader, pUnpackerCode);
 	}
 
 	DWORD dwOffset = RoundUp(pUnpackerCode->SizeOfRawData, 16);
@@ -745,16 +665,14 @@ int main32(int argc, char *argv[])
 	if (pTarget->IsDLL())
 	{	// DLL ! FIX entry point
 		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_EntryPoint, 0x10, AddressOfEntryPoint-0x1000);
-		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_LoadLibraryA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"));
-		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_dll32_GetProcAddress, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress"));
+
 		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GetModuleFileNameA, 0x12, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetModuleFileNameA"));
 	}
 	else
 	{	// EXE ! FIX entry point
 		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_CrtStartup, 0x0A, AddressOfEntryPoint, 0x0a);
 		Patch_Entry(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_GETBASE, 0x0a, pTargetSection->VirtualAddress() + basesize, 0x01);
-		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_LoadLibraryA, 0x0c, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "LoadLibraryA"));
-		//Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_GetProcAddress, 0x0c, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetProcAddress"));
+
 		Patch_MARKER(pTarget, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_exe_GetModuleFileNameA, 0x0c, get_iat_value(kernel32_iat, KERNEL32_IAT_LENGTH, "GetModuleFileNameA"));
 	}
 

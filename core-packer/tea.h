@@ -16,4 +16,7 @@ void tea_encrypt (uint32_t* v, uint32_t* k);
 void tea_decrypt (uint32_t* v, uint32_t* k);
 void tea_decrypt_end_marker(void);	// GENERIC MARKER!
 
+void xor_decrypt (uint32_t* v, uint32_t* k);
+void xor_decrypt_end_marker(void);	// GENERIC MARKER!
+
 #endif

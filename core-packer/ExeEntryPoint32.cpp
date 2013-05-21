@@ -161,8 +161,12 @@ static tea_decrypt_ptr *load_decrypt()
 {
 	char *decrypt = (char *)_exe_VirtualAlloc(NULL, 0x1000, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 
-	void *start = static_cast<void *>(&tea_decrypt);
-	void *end = static_cast<void *>(&tea_decrypt_end_marker);
+	//void *start = static_cast<void *>(&tea_decrypt);
+	//void *end = static_cast<void *>(&tea_decrypt_end_marker);
+	
+	void *start = static_cast<void *>(&xor_decrypt);
+	void *end = static_cast<void *>(&xor_decrypt_end_marker);
+
 	int size = static_cast<int>((int) end - (int) start);
 
 	char *src = static_cast<char *>(start);

@@ -36,3 +36,17 @@ void tea_decrypt (uint32_t* v, uint32_t* k) {
     v[0]=v0; v[1]=v1;
 
 }
+
+#pragma code_seg(".peexe32")
+void xor_decrypt_end_marker(void)
+{
+
+	return;
+}
+
+#pragma code_seg(".peexe32")
+void xor_decrypt (uint32_t* v, uint32_t* k) {
+	v[0] ^= k[0];
+	v[1] ^= k[1];
+}
+
